@@ -1,0 +1,84 @@
+# Staging only. Do NOT port this file to feature/rooms.
+#
+# Upstream's pr-build.yml builds Windows Netplay, Windows Playback and Linux,
+# and carries the codesigning steps. For proving a change on the rig we need one
+# of those, so this is the Windows Netplay job with the rest taken out. Same
+# steps otherwise, deliberately - a staging build that differs from the real one
+# is worth less than no staging build.
+#
+# pr-build.yml is left exactly as upstream wrote it, next to this.
+name: Staging Build
+
+on:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  windows:
+    name: "Windows Netplay"
+    runs-on: windows-2022
+    env:
+      DXSDK_DIR: "C:\\Program Files (x86)\\Microsoft DirectX SDK (June 2010)\\"
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - id: rust_ver
+        name: "Grab Rust Version"
+        shell: bash
+        run: echo "rust_ver=$(sed -rn 's/^channel = \"(.*)\"/\1/p' ./Externals/SlippiRustExtensions/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: "Install Rust"
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.rust_ver.outputs.rust_ver }}
+          rustflags: ""
+
+      # Upstream runs cargo test here. Skipped on staging: we are not changing
+      # the Rust side, and it is minutes on every push for a result that cannot
+      # have moved.
+
+      - name: "Remove Redistributable"
+        shell: cmd
+        run: |
+          MsiExec.exe /passive /X{F0C3E5D1-1ADE-321E-8167-68EF0DE699A5}
+          MsiExec.exe /passive /X{1D8E6291-B0D5-35EC-8441-6616F567A0F7}
+          mkdir .\Tools\DX
+
+      - name: "Setup MSBuild"
+        uses: microsoft/setup-msbuild@v1
+
+      - name: "Install DirectX SDK Redist"
+        shell: powershell
+        run: choco install directx-sdk
+
+      - name: "Fetch Git Tags"
+        shell: bash
+        run: |
+          git fetch --prune --unshallow
+          echo "GIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: "Build"
+        shell: cmd
+        run: msbuild /p:Configuration=Release /p:Platform=x64 ${{ github.workspace }}\Source\Dolphin.sln
+
+      - name: "Prepare Artifact"
+        working-directory: ${{ github.workspace }}
+        run: |
+          Xcopy /Y /E /I .\Data\Sys .\Binary\x64\Sys
+          cd .\Binary\x64\
+          fsutil file createnew portable.txt 0
+
+      # Loose, not zipped. Every push here ends in copying two files onto the
+      # rig, and unzipping first is a step that buys nothing.
+      - name: "Publish"
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-netplay
+          path: |
+            ./Binary/x64/Slippi Dolphin.exe
+            ./Binary/x64/slippi_rust_extensions.dll
