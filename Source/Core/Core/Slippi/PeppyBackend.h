@@ -28,10 +28,11 @@ namespace Peppy
 // back to it, which is what makes an install the same player twice.
 struct Config
 {
-	std::string url;           // https://<ref>.supabase.co
-	std::string key;           // publishable key - safe to ship, see above
-	std::string name;          // display name: Alpha, Bravo, Charlie
-	std::string refresh_token; // ours, written back after a sign-in
+	std::string url;           // supabaseUrl: https://<ref>.supabase.co
+	std::string key;           // supabaseKey: publishable, safe to ship, see above
+	std::string name;          // displayName: Alpha, Bravo, Charlie
+	std::string connect_code;  // connectCode: ALPH#694
+	std::string refresh_token; // refreshToken: ours, written back after a sign-in
 	bool loaded = false;
 };
 
@@ -47,6 +48,7 @@ bool SignedIn();
 // Empty until SignIn() has succeeded.
 const std::string &Uid();
 const std::string &Name();
+const std::string &ConnectCode();
 
 // Call a Postgres function by name. `args_json` is the argument object, and the
 // result is whatever the function returned, as JSON text. An empty string means

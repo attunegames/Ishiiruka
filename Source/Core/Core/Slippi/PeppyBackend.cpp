@@ -98,10 +98,12 @@ bool LoadConfig()
 	try
 	{
 		json j = json::parse(text);
-		s_config.url = j.value("url", "");
-		s_config.key = j.value("key", "");
-		s_config.name = j.value("name", "");
-		s_config.refresh_token = j.value("refresh_token", "");
+		// The names peppy.json already uses, so one file serves both builds.
+		s_config.url = j.value("supabaseUrl", "");
+		s_config.key = j.value("supabaseKey", "");
+		s_config.name = j.value("displayName", "");
+		s_config.connect_code = j.value("connectCode", "");
+		s_config.refresh_token = j.value("refreshToken", "");
 	}
 	catch (const std::exception &e)
 	{
@@ -111,7 +113,7 @@ bool LoadConfig()
 
 	if (s_config.url.empty() || s_config.key.empty())
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] peppy.json needs both url and key");
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] peppy.json needs supabaseUrl and supabaseKey");
 		return false;
 	}
 	if (s_config.name.empty())
@@ -140,7 +142,7 @@ void SaveRefreshToken(const std::string &token)
 			j = json::object();
 		}
 	}
-	j["refresh_token"] = token;
+	j["refreshToken"] = token;
 
 	if (!File::WriteStringToFile(j.dump(2), ConfigPath()))
 		WARN_LOG(SLIPPI_ONLINE, "[Peppy] could not write peppy.json - this install will be a "
@@ -187,6 +189,11 @@ const std::string &Uid()
 const std::string &Name()
 {
 	return s_config.name;
+}
+
+const std::string &ConnectCode()
+{
+	return s_config.connect_code;
 }
 
 bool SignIn()
@@ -238,7 +245,7 @@ std::string Rpc(const std::string &fn, const std::string &args_json)
 
 std::string CreateRoom(const std::string &mode, bool listed)
 {
-	json args{{"p_mode", mode}, {"p_listed", listed}, {"p_name", Name()}, {"p_code", ""}};
+	json args{{"p_mode", mode}, {"p_listed", listed}, {"p_name", Name()}, {"p_code", ConnectCode()}};
 
 	std::string reply = Rpc("pd_room_create", args.dump());
 	if (reply.empty())
