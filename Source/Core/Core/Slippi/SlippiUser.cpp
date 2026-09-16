@@ -12,9 +12,9 @@
 
 using json = nlohmann::json;
 
-// ---------------------------------------------------------- Peppy identity ---
+// ---------------------------------------------------------- Rooms identity ---
 //
-// Peppy runs its own matchmaking, so a slippi.gg account buys us nothing: there
+// Rooms runs its own matchmaking, so a slippi.gg account buys us nothing: there
 // is no server of theirs to authenticate against. A player is whoever
 // peppy.json says they are.
 //
@@ -28,18 +28,18 @@ using json = nlohmann::json;
 // keeps this a small, reversible change rather than a fork of the login.
 //
 // This is NOT the Supabase identity. That one is anonymous, arrives over the
-// network, and lives in PeppyBackend; this is only what Melee is told so it
+// network, and lives in RoomsBackend; this is only what Melee is told so it
 // will draw the menu. When the real Slippi user is wired up, both collapse into
 // it.
 namespace
 {
-std::once_flag s_peppy_once;
-bool s_peppy_present = false;
-SlippiUser::UserInfo s_peppy_user;
+std::once_flag s_rooms_once;
+bool s_rooms_present = false;
+SlippiUser::UserInfo s_rooms_user;
 
-void LoadPeppyIdentity()
+void LoadRoomsIdentity()
 {
-	std::call_once(s_peppy_once, []() {
+	std::call_once(s_rooms_once, []() {
 		std::string path = File::GetUserPath(D_CONFIG_IDX) + "peppy.json";
 		std::ifstream file(path);
 		if (!file.good())
@@ -49,30 +49,30 @@ void LoadPeppyIdentity()
 		{
 			json j;
 			file >> j;
-			s_peppy_user.displayName = j.value("displayName", "");
-			s_peppy_user.connectCode = j.value("connectCode", "");
-			s_peppy_user.uid = j.value("uid", "");
-			s_peppy_user.playKey = "";
+			s_rooms_user.displayName = j.value("displayName", "");
+			s_rooms_user.connectCode = j.value("connectCode", "");
+			s_rooms_user.uid = j.value("uid", "");
+			s_rooms_user.playKey = "";
 
 			// prepareOnlineStatus() semver-compares this against the running build
 			// and tells Melee an update is required if it is newer. There is no
 			// update service here, so report a version that can never win that
 			// comparison.
-			s_peppy_user.latestVersion = "0.0.0";
+			s_rooms_user.latestVersion = "0.0.0";
 
-			s_peppy_present =
-			    !s_peppy_user.displayName.empty() && !s_peppy_user.connectCode.empty();
-			if (s_peppy_present)
+			s_rooms_present =
+			    !s_rooms_user.displayName.empty() && !s_rooms_user.connectCode.empty();
+			if (s_rooms_present)
 			{
-				WARN_LOG(SLIPPI_ONLINE, "[Peppy] Identity: %s (%s)",
-				         s_peppy_user.displayName.c_str(), s_peppy_user.connectCode.c_str());
+				WARN_LOG(SLIPPI_ONLINE, "[Rooms] Identity: %s (%s)",
+				         s_rooms_user.displayName.c_str(), s_rooms_user.connectCode.c_str());
 			}
 		}
 		catch (...)
 		{
 			// A malformed file must not take online mode down with it - fall back
 			// to the normal login path.
-			ERROR_LOG(SLIPPI_ONLINE, "[Peppy] Could not read %s, ignoring it", path.c_str());
+			ERROR_LOG(SLIPPI_ONLINE, "[Rooms] Could not read %s, ignoring it", path.c_str());
 		}
 	});
 }
@@ -104,10 +104,10 @@ SlippiUser::~SlippiUser() {}
 
 bool SlippiUser::AttemptLogin()
 {
-	// Already "logged in" as whoever Peppy says we are - never send the player
+	// Already "logged in" as whoever Rooms says we are - never send the player
 	// off to slippi.gg to make an account they do not need.
-	LoadPeppyIdentity();
-	if (s_peppy_present)
+	LoadRoomsIdentity();
+	if (s_rooms_present)
 		return true;
 
 	return slprs_user_attempt_login(slprs_exi_device_ptr);
@@ -140,9 +140,9 @@ void SlippiUser::OverwriteLatestVersion(std::string version)
 
 SlippiUser::UserInfo SlippiUser::GetUserInfo()
 {
-	LoadPeppyIdentity();
-	if (s_peppy_present)
-		return s_peppy_user;
+	LoadRoomsIdentity();
+	if (s_rooms_present)
+		return s_rooms_user;
 
 	SlippiUser::UserInfo userInfo;
 
@@ -171,8 +171,8 @@ std::vector<std::string> SlippiUser::GetUserChatMessages()
 
 bool SlippiUser::IsLoggedIn()
 {
-	LoadPeppyIdentity();
-	if (s_peppy_present)
+	LoadRoomsIdentity();
+	if (s_rooms_present)
 		return true;
 
 	return slprs_user_get_is_logged_in(slprs_exi_device_ptr);

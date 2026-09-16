@@ -1,4 +1,4 @@
-#include "Core/Slippi/PeppyBackend.h"
+#include "Core/Slippi/SlippiRooms.h"
 
 #include <curl/curl.h>
 #include <mutex>
@@ -10,7 +10,7 @@
 
 using json = nlohmann::json;
 
-namespace Peppy
+namespace Rooms
 {
 namespace
 {
@@ -42,7 +42,7 @@ std::string Post(const std::string &url, const std::string &body, const std::str
 	CURL *curl = curl_easy_init();
 	if (!curl)
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] curl would not start");
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] curl would not start");
 		return "";
 	}
 
@@ -69,14 +69,14 @@ std::string Post(const std::string &url, const std::string &body, const std::str
 
 	if (res != CURLE_OK)
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] %s failed: %s", url.c_str(), curl_easy_strerror(res));
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] %s failed: %s", url.c_str(), curl_easy_strerror(res));
 		return "";
 	}
 	if (status < 200 || status >= 300)
 	{
 		// The body is where Postgres puts its reason, and it is almost always
 		// the thing you actually want to read.
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] %s returned %ld: %s", url.c_str(), status,
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] %s returned %ld: %s", url.c_str(), status,
 		          response.c_str());
 		return "";
 	}
@@ -91,7 +91,7 @@ bool LoadConfig()
 	std::string text;
 	if (!File::ReadFileToString(ConfigPath(), text))
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] no peppy.json at %s", ConfigPath().c_str());
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] no peppy.json at %s", ConfigPath().c_str());
 		return false;
 	}
 
@@ -107,13 +107,13 @@ bool LoadConfig()
 	}
 	catch (const std::exception &e)
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] peppy.json is not valid JSON: %s", e.what());
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] peppy.json is not valid JSON: %s", e.what());
 		return false;
 	}
 
 	if (s_config.url.empty() || s_config.key.empty())
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] peppy.json needs supabaseUrl and supabaseKey");
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] peppy.json needs supabaseUrl and supabaseKey");
 		return false;
 	}
 	if (s_config.name.empty())
@@ -145,7 +145,7 @@ void SaveRefreshToken(const std::string &token)
 	j["refreshToken"] = token;
 
 	if (!File::WriteStringToFile(j.dump(2), ConfigPath()))
-		WARN_LOG(SLIPPI_ONLINE, "[Peppy] could not write peppy.json - this install will be a "
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] could not write peppy.json - this install will be a "
 		                        "different player next launch");
 }
 
@@ -177,7 +177,7 @@ bool AdoptSession(const std::string &response)
 	}
 	catch (const std::exception &e)
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] could not read the sign-in reply: %s", e.what());
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] could not read the sign-in reply: %s", e.what());
 		return false;
 	}
 }
@@ -219,26 +219,26 @@ bool SignIn()
 		if (AdoptSession(Post(s_config.url + "/auth/v1/token?grant_type=refresh_token", body, "")))
 		{
 			s_signed_in = true;
-			WARN_LOG(SLIPPI_ONLINE, "[Peppy] signed in as %s (%s), returning player",
+			WARN_LOG(SLIPPI_ONLINE, "[Rooms] signed in as %s (%s), returning player",
 			         s_config.name.c_str(), s_uid.c_str());
 			return true;
 		}
 		// Expired or revoked. Fall through and become somebody new rather than
 		// refusing to start - but say so, because it means losing this
 		// install's identity and that is worth noticing in a log.
-		WARN_LOG(SLIPPI_ONLINE, "[Peppy] the stored token did not work - signing in fresh, "
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] the stored token did not work - signing in fresh, "
 		                        "this install is now a different player");
 	}
 
 	if (AdoptSession(Post(s_config.url + "/auth/v1/signup", "{}", "")))
 	{
 		s_signed_in = true;
-		WARN_LOG(SLIPPI_ONLINE, "[Peppy] signed in as %s (%s), new player", s_config.name.c_str(),
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] signed in as %s (%s), new player", s_config.name.c_str(),
 		         s_uid.c_str());
 		return true;
 	}
 
-	ERROR_LOG(SLIPPI_ONLINE, "[Peppy] could not sign in. Anonymous sign-ins may be turned off "
+	ERROR_LOG(SLIPPI_ONLINE, "[Rooms] could not sign in. Anonymous sign-ins may be turned off "
 	                         "for this project (Auth -> Providers).");
 	return false;
 }
@@ -263,19 +263,19 @@ std::string CreateRoom(const std::string &mode, bool listed)
 		json j = json::parse(reply);
 		if (!j.value("ok", false))
 		{
-			ERROR_LOG(SLIPPI_ONLINE, "[Peppy] pd_room_create said no: %s",
+			ERROR_LOG(SLIPPI_ONLINE, "[Rooms] pd_room_create said no: %s",
 			          j.value("error", "no reason given").c_str());
 			return "";
 		}
 		std::string room = j.value("room", "");
-		WARN_LOG(SLIPPI_ONLINE, "[Peppy] made room %s (%s, %s)", room.c_str(), mode.c_str(),
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] made room %s (%s, %s)", room.c_str(), mode.c_str(),
 		         listed ? "public" : "private");
 		return room;
 	}
 	catch (const std::exception &e)
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] could not read the create reply: %s", e.what());
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] could not read the create reply: %s", e.what());
 		return "";
 	}
 }
-} // namespace Peppy
+} // namespace Rooms

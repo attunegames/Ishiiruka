@@ -1,6 +1,6 @@
 #pragma once
 
-// Peppy's own backend: who you are, and how to ask it for a room.
+// Rooms's own backend: who you are, and how to ask it for a room.
 //
 // This replaces the connection to mm.slippi.gg for rooms only. It does the same
 // job Slippi's server does - introduce two clients to each other and then get
@@ -22,7 +22,7 @@
 #include <string>
 #include "Common/CommonTypes.h"
 
-namespace Peppy
+namespace Rooms
 {
 // Read from User/Config/peppy.json at startup. The refresh token is written
 // back to it, which is what makes an install the same player twice.
@@ -58,4 +58,4 @@ std::string Rpc(const std::string &fn, const std::string &args_json);
 // The round trip, end to end: make a room and hand back its code.
 // Returns an empty string if anything went wrong, having said why in the log.
 std::string CreateRoom(const std::string &mode, bool listed);
-} // namespace Peppy
+} // namespace Rooms

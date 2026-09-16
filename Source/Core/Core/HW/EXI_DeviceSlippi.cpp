@@ -4,7 +4,7 @@
 
 #include "Core/Debugger/Debugger_SymbolMap.h"
 
-#include "Core/Slippi/PeppyBackend.h"
+#include "Core/Slippi/SlippiRooms.h"
 #include "Core/Slippi/SlippiPlayback.h"
 #include "Core/Slippi/SlippiPremadeText.h"
 #include "Core/Slippi/SlippiReplayComm.h"
@@ -2793,13 +2793,13 @@ void CEXISlippi::setMatchSelections(u8 *payload)
 	}
 }
 
-// Peppy: the menu asked for a room.
+// Rooms: the menu asked for a room.
 //
 // Two bytes: which kind, and whether it is listed. Done on a detached thread
 // because this talks to the network and the CPU thread is mid-frame. Melee gets
 // no answer back through this command - it finds out the room exists by asking
 // for the room list, the same way it would find anybody else's.
-void CEXISlippi::handlePeppyCreateRoom(u8 *payload)
+void CEXISlippi::handleRoomCreate(u8 *payload)
 {
 	static const char *kModes[] = {"singles", "doubles", "ironmans", "crew", "tournament"};
 	const u8 mode = payload[0];
@@ -2807,12 +2807,12 @@ void CEXISlippi::handlePeppyCreateRoom(u8 *payload)
 
 	if (mode >= sizeof(kModes) / sizeof(kModes[0]))
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] create asked for mode %d, which does not exist", mode);
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] create asked for mode %d, which does not exist", mode);
 		return;
 	}
 
 	std::string name = kModes[mode];
-	std::thread([name, listed]() { Peppy::CreateRoom(name, listed); }).detach();
+	std::thread([name, listed]() { Rooms::CreateRoom(name, listed); }).detach();
 }
 
 void CEXISlippi::prepareFileLength(u8 *payload)
@@ -3495,8 +3495,8 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 		case CMD_SET_MATCH_SELECTIONS:
 			setMatchSelections(&memPtr[bufLoc + 1]);
 			break;
-		case CMD_PEPPY_CREATE_ROOM:
-			handlePeppyCreateRoom(&memPtr[bufLoc + 1]);
+		case CMD_ROOM_CREATE:
+			handleRoomCreate(&memPtr[bufLoc + 1]);
 			break;
 		case CMD_FILE_LENGTH:
 			prepareFileLength(&memPtr[bufLoc + 1]);

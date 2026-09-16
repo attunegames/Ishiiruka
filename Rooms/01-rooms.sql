@@ -1,4 +1,4 @@
--- Peppy rooms, part 1: rooms exist, are listed, and can be joined.
+-- Rooms rooms, part 1: rooms exist, are listed, and can be joined.
 --
 -- A room is a place people wait to play each other. Two at a time play, the
 -- rest wait in a queue, anyone can watch, and when a match ends the winner
@@ -108,7 +108,7 @@ create table pd_members (
   -- It happens when a pairing forms, so the mapping is seconds old when the
   -- opponent dials it. pd_address_window decides how long it counts for.
   --
-  -- There is no LAN address here. Peppy is for playing people over the
+  -- There is no LAN address here. Rooms is for playing people over the
   -- internet, and a LAN shortcut cost every remote watcher a full connect
   -- timeout against a 192.168.x.x that was never theirs. Running several
   -- clients on one machine for testing is a client-side concern, not a column.
