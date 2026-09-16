@@ -159,8 +159,15 @@ bool AdoptSession(const std::string &response)
 		json j = json::parse(response);
 		s_access_token = j.value("access_token", "");
 		std::string refresh = j.value("refresh_token", "");
-		if (j.contains("user") && j["user"].contains("id"))
-			s_uid = j["user"]["id"].get<std::string>();
+		// find(), not contains() - the vendored nlohmann here is 3.4.0 and
+		// contains() arrived in 3.11.
+		auto user = j.find("user");
+		if (user != j.end())
+		{
+			auto id = user->find("id");
+			if (id != user->end() && id->is_string())
+				s_uid = id->get<std::string>();
+		}
 
 		if (s_access_token.empty() || s_uid.empty())
 			return false;
