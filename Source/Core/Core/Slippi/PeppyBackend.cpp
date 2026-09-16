@@ -1,0 +1,267 @@
+#include "Core/Slippi/PeppyBackend.h"
+
+#include <curl/curl.h>
+#include <mutex>
+
+#include "Common/CommonPaths.h"
+#include "Common/FileUtil.h"
+#include "Common/Logging/Log.h"
+#include "nlohmann/json.hpp"
+
+using json = nlohmann::json;
+
+namespace Peppy
+{
+namespace
+{
+Config s_config;
+std::string s_uid;
+std::string s_access_token;
+bool s_signed_in = false;
+std::mutex s_mutex;
+
+std::string ConfigPath()
+{
+	return File::GetUserPath(D_CONFIG_IDX) + "peppy.json";
+}
+
+size_t WriteToString(char *data, size_t size, size_t count, void *out)
+{
+	static_cast<std::string *>(out)->append(data, size * count);
+	return size * count;
+}
+
+// One place for every request, because every one of them needs the same two
+// headers and the same failure handling.
+//
+// `bearer` is the access token when we have one. Supabase wants BOTH apikey and
+// Authorization; sending only the key authenticates as nobody, and auth.uid()
+// comes back null - which looks exactly like "not signed in" from the SQL side.
+std::string Post(const std::string &url, const std::string &body, const std::string &bearer)
+{
+	CURL *curl = curl_easy_init();
+	if (!curl)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] curl would not start");
+		return "";
+	}
+
+	std::string response;
+	struct curl_slist *headers = nullptr;
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	headers = curl_slist_append(headers, ("apikey: " + s_config.key).c_str());
+	if (!bearer.empty())
+		headers = curl_slist_append(headers, ("Authorization: Bearer " + bearer).c_str());
+
+	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteToString);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 8000);
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+	CURLcode res = curl_easy_perform(curl);
+	long status = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+
+	if (res != CURLE_OK)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] %s failed: %s", url.c_str(), curl_easy_strerror(res));
+		return "";
+	}
+	if (status < 200 || status >= 300)
+	{
+		// The body is where Postgres puts its reason, and it is almost always
+		// the thing you actually want to read.
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] %s returned %ld: %s", url.c_str(), status,
+		          response.c_str());
+		return "";
+	}
+	return response;
+}
+
+bool LoadConfig()
+{
+	if (s_config.loaded)
+		return true;
+
+	std::string text;
+	if (!File::ReadFileToString(ConfigPath(), text))
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] no peppy.json at %s", ConfigPath().c_str());
+		return false;
+	}
+
+	try
+	{
+		json j = json::parse(text);
+		s_config.url = j.value("url", "");
+		s_config.key = j.value("key", "");
+		s_config.name = j.value("name", "");
+		s_config.refresh_token = j.value("refresh_token", "");
+	}
+	catch (const std::exception &e)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] peppy.json is not valid JSON: %s", e.what());
+		return false;
+	}
+
+	if (s_config.url.empty() || s_config.key.empty())
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] peppy.json needs both url and key");
+		return false;
+	}
+	if (s_config.name.empty())
+		s_config.name = "Player";
+
+	s_config.loaded = true;
+	return true;
+}
+
+// Write the refresh token back. Without this every launch is a NEW anonymous
+// user: the rig fills up with orphans and Alpha is not the same player twice.
+void SaveRefreshToken(const std::string &token)
+{
+	s_config.refresh_token = token;
+
+	json j;
+	std::string text;
+	if (File::ReadFileToString(ConfigPath(), text))
+	{
+		try
+		{
+			j = json::parse(text);
+		}
+		catch (const std::exception &)
+		{
+			j = json::object();
+		}
+	}
+	j["refresh_token"] = token;
+
+	if (!File::WriteStringToFile(j.dump(2), ConfigPath()))
+		WARN_LOG(SLIPPI_ONLINE, "[Peppy] could not write peppy.json - this install will be a "
+		                        "different player next launch");
+}
+
+// Take whatever /auth/v1/token or /auth/v1/signup gave back.
+bool AdoptSession(const std::string &response)
+{
+	if (response.empty())
+		return false;
+	try
+	{
+		json j = json::parse(response);
+		s_access_token = j.value("access_token", "");
+		std::string refresh = j.value("refresh_token", "");
+		if (j.contains("user") && j["user"].contains("id"))
+			s_uid = j["user"]["id"].get<std::string>();
+
+		if (s_access_token.empty() || s_uid.empty())
+			return false;
+		if (!refresh.empty() && refresh != s_config.refresh_token)
+			SaveRefreshToken(refresh);
+		return true;
+	}
+	catch (const std::exception &e)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] could not read the sign-in reply: %s", e.what());
+		return false;
+	}
+}
+} // namespace
+
+bool SignedIn()
+{
+	return s_signed_in;
+}
+
+const std::string &Uid()
+{
+	return s_uid;
+}
+
+const std::string &Name()
+{
+	return s_config.name;
+}
+
+bool SignIn()
+{
+	std::lock_guard<std::mutex> lk(s_mutex);
+	if (s_signed_in)
+		return true;
+	if (!LoadConfig())
+		return false;
+
+	// The stored token first, so an install keeps its identity. A refresh token
+	// is single-use - the reply carries the next one, which AdoptSession saves.
+	if (!s_config.refresh_token.empty())
+	{
+		std::string body = json{{"refresh_token", s_config.refresh_token}}.dump();
+		if (AdoptSession(Post(s_config.url + "/auth/v1/token?grant_type=refresh_token", body, "")))
+		{
+			s_signed_in = true;
+			WARN_LOG(SLIPPI_ONLINE, "[Peppy] signed in as %s (%s), returning player",
+			         s_config.name.c_str(), s_uid.c_str());
+			return true;
+		}
+		// Expired or revoked. Fall through and become somebody new rather than
+		// refusing to start - but say so, because it means losing this
+		// install's identity and that is worth noticing in a log.
+		WARN_LOG(SLIPPI_ONLINE, "[Peppy] the stored token did not work - signing in fresh, "
+		                        "this install is now a different player");
+	}
+
+	if (AdoptSession(Post(s_config.url + "/auth/v1/signup", "{}", "")))
+	{
+		s_signed_in = true;
+		WARN_LOG(SLIPPI_ONLINE, "[Peppy] signed in as %s (%s), new player", s_config.name.c_str(),
+		         s_uid.c_str());
+		return true;
+	}
+
+	ERROR_LOG(SLIPPI_ONLINE, "[Peppy] could not sign in. Anonymous sign-ins may be turned off "
+	                         "for this project (Auth -> Providers).");
+	return false;
+}
+
+std::string Rpc(const std::string &fn, const std::string &args_json)
+{
+	if (!SignedIn() && !SignIn())
+		return "";
+	return Post(s_config.url + "/rest/v1/rpc/" + fn, args_json, s_access_token);
+}
+
+std::string CreateRoom(const std::string &mode, bool listed)
+{
+	json args{{"p_mode", mode}, {"p_listed", listed}, {"p_name", Name()}, {"p_code", ""}};
+
+	std::string reply = Rpc("pd_room_create", args.dump());
+	if (reply.empty())
+		return "";
+
+	try
+	{
+		json j = json::parse(reply);
+		if (!j.value("ok", false))
+		{
+			ERROR_LOG(SLIPPI_ONLINE, "[Peppy] pd_room_create said no: %s",
+			          j.value("error", "no reason given").c_str());
+			return "";
+		}
+		std::string room = j.value("room", "");
+		WARN_LOG(SLIPPI_ONLINE, "[Peppy] made room %s (%s, %s)", room.c_str(), mode.c_str(),
+		         listed ? "public" : "private");
+		return room;
+	}
+	catch (const std::exception &e)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Peppy] could not read the create reply: %s", e.what());
+		return "";
+	}
+}
+} // namespace Peppy

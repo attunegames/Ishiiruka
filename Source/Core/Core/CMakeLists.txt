@@ -190,6 +190,7 @@ set(SRCS	ActionReplay.cpp
 			PowerPC/JitILCommon/JitILBase_Paired.cpp
 			PowerPC/JitILCommon/JitILBase_FloatingPoint.cpp
 			PowerPC/JitILCommon/JitILBase_Integer.cpp
+			Slippi/PeppyBackend.cpp
 			Slippi/SlippiGameFileLoader.cpp
 			Slippi/SlippiMatchmaking.cpp
 			Slippi/SlippiNetplay.cpp

@@ -93,6 +93,10 @@ class CEXISlippi : public IEXIDevice
 		CMD_GET_PLAYER_SETTINGS = 0xC3,
 		CMD_REPORT_MATCH_STATUS_UPDATE = 0xC4,
 
+		// Peppy: its own rooms. 0xC5 up is clear of everything Slippi uses -
+		// their ids run to 0xC4 and then resume at 0xD1.
+		CMD_PEPPY_CREATE_ROOM = 0xC5,
+
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
 		CMD_FILE_LENGTH = 0xD1,
@@ -182,6 +186,9 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_REPORT_MATCH_STATUS_UPDATE, static_cast<u32>(sizeof(SlippiExiTypes::ReportMatchStatusUpdateQuery) - 1)},
 
 	    // Misc
+	    // Peppy: mode byte, then listed/unlisted.
+	    {CMD_PEPPY_CREATE_ROOM, 0x2},
+
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
 	    {CMD_FILE_LOAD, 0x40},
@@ -278,6 +285,7 @@ class CEXISlippi : public IEXIDevice
 	// misc stuff
 	void handleChatMessage(u8 *payload);
 	void logMessageFromGame(u8 *payload);
+	void handlePeppyCreateRoom(u8 *payload);
 	void prepareFileLength(u8 *payload);
 	void prepareFileLoad(u8 *payload);
 	void prepareGctLength();
