@@ -65,12 +65,11 @@ jobs:
         shell: cmd
         run: msbuild /p:Configuration=Release /p:Platform=x64 ${{ github.workspace }}\Source\Dolphin.sln
 
-      - name: "Prepare Artifact"
-        working-directory: ${{ github.workspace }}
-        run: |
-          Xcopy /Y /E /I .\Data\Sys .\Binary\x64\Sys
-          cd .\Binary\x64\
-          fsutil file createnew portable.txt 0
+      # No packaging step. Upstream copies Data\Sys in and makes portable.txt
+      # because it ships a whole zip; we take two files out of Binary\x64 and
+      # copy them onto a rig that already has everything else. Its
+      # `fsutil file createnew portable.txt` also fails outright when the file
+      # is already there, which it is.
 
       # Loose, not zipped. Every push here ends in copying two files onto the
       # rig, and unzipping first is a step that buys nothing.
