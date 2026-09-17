@@ -51,7 +51,8 @@
 //            +0x00  char code[8]    four characters, null-terminated
 //            +0x08  u8   mode       index into the menu's kinds, 0xFF unknown
 //            +0x09  u8   players
-//            +0x0A  u8   pad[2]
+//            +0x0A  u8   capacity   the room's own limit
+//            +0x0B  u8   pad
 //            +0x0C  char owner[32]  who opened it
 //            +0x2C  u8   pad[4]
 #define ROOM_LIST_MAX     8

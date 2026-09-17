@@ -142,6 +142,7 @@ struct Listing
 	std::string mode;   // singles | doubles | ironmans | crew | tournament
 	std::string owner;  // who opened it
 	int players = 0;    // how many are actually still talking to it
+	int capacity = 8;   // the room's own limit, not a number baked in here
 };
 
 // Fetch the public rooms. `mode` filters; empty means every kind, which is what

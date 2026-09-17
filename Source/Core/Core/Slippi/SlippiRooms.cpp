@@ -530,6 +530,7 @@ void FetchRooms(const std::string &mode)
 				l.mode = r.value("mode", "");
 				l.owner = r.value("owner", "");
 				l.players = r.value("players", 0);
+				l.capacity = r.value("capacity", 8);
 				found.push_back(l);
 			}
 		}

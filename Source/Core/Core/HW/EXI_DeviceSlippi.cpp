@@ -2923,6 +2923,7 @@ void CEXISlippi::prepareRoomList()
 				}
 			}
 			entry[0x09] = (u8)std::min(l.players, 255);
+			entry[0x0A] = (u8)std::min(l.capacity, 255);
 
 			std::string owner = ConvertStringForGame(l.owner, MAX_NAME_LENGTH);
 			owner.resize(32, '\0');
