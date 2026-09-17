@@ -3385,6 +3385,48 @@ void CEXISlippi::handleReportGame(const SlippiExiTypes::ReportGameQuery &query)
 		slprs_game_report_add_player_report(gameReport, playerReport);
 	}
 
+	// Rooms: tell the room how it went. This is what actually ENDS the pairing -
+	// pd_result marks it done, sends the loser to the back of the queue and
+	// pairs whoever is next. Until it is called the pairing stays 'ready', and a
+	// ready pairing is one the room will try to start all over again the moment
+	// both players walk back in.
+	//
+	// Our own port is found by uid rather than assumed: winnerIdx is an index
+	// into the match, not into anything this client owns.
+	{
+		Rooms::State rs = Rooms::Latest();
+		if (!rs.match_id.empty())
+		{
+			int myIdx = -1;
+			for (size_t i = 0; i < mmPlayers.size(); i++)
+			{
+				if (!userInfo.uid.empty() && mmPlayers[i].uid == userInfo.uid)
+					myIdx = (int)i;
+			}
+
+			if (winnerIdx >= 0 && winnerIdx < 4 && myIdx >= 0)
+			{
+				Rooms::ReportResult(rs.match_id, winnerIdx == myIdx,
+				                    query.players[winnerIdx].stocksRemaining);
+			}
+			else if (gameEndMethod == 7 && lrasInitiator >= 0 && myIdx >= 0)
+			{
+				// Somebody quit out. Melee names no winner, but it does name who
+				// left, and whoever left lost.
+				Rooms::ReportResult(rs.match_id, lrasInitiator != myIdx, 0);
+			}
+			else
+			{
+				// ⚠ A genuine draw, or a game we cannot place ourselves in.
+				// Nothing is reported, so the pairing stays open rather than
+				// recording a winner we would be inventing.
+				ERROR_LOG(SLIPPI_ONLINE,
+				          "[Rooms] no result to report: winnerIdx %d, myIdx %d, endMethod %d",
+				          winnerIdx, myIdx, gameEndMethod);
+			}
+		}
+	}
+
 	// If ranked mode and the game ended with a quit out, this is either a desync or an interrupted game,
 	// attempt to send synced values to opponents in order to restart the match where it was left off
 	if (onlineMode == SlippiMatchmaking::OnlinePlayMode::RANKED && gameEndMethod == 7)

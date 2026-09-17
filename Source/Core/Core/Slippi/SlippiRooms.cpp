@@ -337,6 +337,16 @@ Rooms::State s_state;
 // rather than another lock.
 std::string s_room;          // guarded by s_state_lock
 std::atomic<bool> s_queued{false};
+
+// The match we have already played, so we do not play it twice.
+//
+// ⚠ pd_result ends the pairing, but the room scene is rebuilt the moment the
+// game ends and ticks before the result has finished its round trip. For those
+// couple of seconds the room still says 'ready', and a ready room is one that
+// asks Slippi to connect us - to the person we have just finished playing.
+//
+// Guarded by s_state_lock, like s_room.
+std::string s_played_match;
 std::atomic<int> s_pick_char{Rooms::Draft::NOT_PICKED};
 std::atomic<int> s_pick_color{0};
 std::atomic<int> s_pick_stage{Rooms::Draft::NOT_PICKED};
@@ -410,6 +420,10 @@ void ApplyReply(const std::string &reply)
 	}
 
 	std::lock_guard<std::mutex> lock(s_state_lock);
+	// See s_played_match. The pairing is on its way out; do not start it again
+	// while it goes.
+	if (!s_played_match.empty() && s.match_id == s_played_match)
+		s.ready = false;
 	s_state = s;
 }
 
@@ -525,6 +539,39 @@ void ReportPick(int character, int color, int stage)
 	s_pick_char.store(character);
 	s_pick_color.store(color);
 	s_pick_stage.store(stage);
+}
+
+void ReportResult(const std::string &match_id, bool i_won, int winner_stocks)
+{
+	if (match_id.empty())
+		return;
+
+	std::string room;
+	{
+		std::lock_guard<std::mutex> lock(s_state_lock);
+		room = s_room;
+		s_played_match = match_id;
+		// Whatever the next tick says, this pairing is finished.
+		s_state.ready = false;
+	}
+	if (room.empty())
+		return;
+
+	// The picks belong to the game that just finished. Leaving them set would
+	// hand the NEXT pairing this one's characters before anybody had chosen.
+	s_pick_char.store(Draft::NOT_PICKED);
+	s_pick_stage.store(Draft::NOT_PICKED);
+
+	std::thread([room, match_id, i_won, winner_stocks]() {
+		json args{{"p_room", room},
+		          {"p_match_id", match_id},
+		          {"p_i_won", i_won},
+		          {"p_stocks", winner_stocks}};
+		std::string reply = Rpc("pd_result", args.dump());
+		if (reply.empty())
+			return; // Rpc already said why.
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] reported the result: %s", reply.c_str());
+	}).detach();
 }
 
 State Latest()

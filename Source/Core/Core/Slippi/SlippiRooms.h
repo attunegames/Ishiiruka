@@ -148,6 +148,21 @@ void SetQueued(bool queued);
 // OWN character; either of the two may report the stage.
 void ReportPick(int character, int color, int stage);
 
+// The match is over. Ends the pairing, moves the loser to the back of the
+// queue and pairs whoever is next - all of which pd_result already does.
+//
+// ⚠ Until this is called the pairing stays 'ready', and a room whose pairing
+// is ready is a room that wants to start a match. Both players walking back in
+// after a game would be told to connect to each other all over again.
+//
+// Both sides report, and pd_result takes the first and answers "already
+// recorded" to the second, so the result does not depend on the loser still
+// being there to file it.
+//
+// Runs on its own thread: the caller is the game-end handler and must not wait
+// on a round trip.
+void ReportResult(const std::string &match_id, bool i_won, int winner_stocks);
+
 // The most recent reply. Copied out under the lock, so the caller can read it
 // at its leisure without holding anything up.
 State Latest();

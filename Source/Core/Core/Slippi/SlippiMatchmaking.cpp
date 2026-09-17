@@ -61,6 +61,23 @@ void SlippiMatchmaking::FindMatch(MatchSearchSettings settings)
 
 	ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Starting matchmaking...");
 
+	// ⚠ The previous search's thread is still JOINABLE even though it has
+	// finished. Nothing joins it but the destructor, and stock Slippi never
+	// notices because it only ever searches ONCE per session: the character
+	// select searches, the connection is made, and that connection then lasts
+	// the whole set.
+	//
+	// Rooms search again for every pairing, and assigning over a joinable
+	// std::thread calls std::terminate(). That is an instant abort - no
+	// exception, no log line, no crash dialog - on both clients at the same
+	// moment, because both re-enter the room on the same frame.
+	//
+	// The thread has already left its loop by the time we are called
+	// (IsSearching() goes false as soon as a match is made or errors out), so
+	// this join returns immediately rather than stalling the caller.
+	if (m_matchmakeThread.joinable())
+		m_matchmakeThread.join();
+
 	m_searchSettings = settings;
 
 	m_errorMsg = "";
