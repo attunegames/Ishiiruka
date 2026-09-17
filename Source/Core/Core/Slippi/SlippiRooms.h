@@ -20,6 +20,7 @@
 // a migration, and that is the point to decide rather than now.
 
 #include <string>
+#include <vector>
 #include "Common/CommonTypes.h"
 
 namespace Rooms
@@ -58,4 +59,78 @@ std::string Rpc(const std::string &fn, const std::string &args_json);
 // The round trip, end to end: make a room and hand back its code.
 // Returns an empty string if anything went wrong, having said why in the log.
 std::string CreateRoom(const std::string &mode, bool listed);
+
+// ------------------------------------------------------------ the room view --
+
+struct Player
+{
+	std::string name;
+	std::string code;   // connect code
+	int crowns = 0;
+};
+
+// What the top of the room draws.
+//
+// ⚠️ NOT_PICKED rather than 0, because 0 is a real character (internal id 0 is
+// Captain Falcon) and a real stage. pd_tick returns null until somebody
+// reports, deliberately, so the room can show a question mark instead of
+// guessing - and a default of 0 would silently draw the wrong fighter.
+struct Draft
+{
+	static constexpr int NOT_PICKED = -1;
+
+	int stage = NOT_PICKED;
+	int host_char = NOT_PICKED;
+	int host_color = 0;
+	int guest_char = NOT_PICKED;
+	int guest_color = 0;
+
+	// The pairing exists AND the match is on. The difference between "these two
+	// are about to play" and "these two are playing", which is what decides
+	// whether the band shows two fighters or stays empty.
+	bool playing = false;
+};
+
+struct State
+{
+	bool valid = false;        // false until a tick has come back
+
+	std::string room;
+	std::string state;         // waiting | ready | stun | heartbeat | error
+	std::string match_id;
+	bool is_host = false;
+
+	std::vector<Player> active; // the two playing, host first
+	std::vector<Player> queue;  // waiting, in the order the room will pair them
+	std::vector<Player> lobby;  // present, not waiting for a game
+	int position = 0;           // our place in that queue, 1-based
+
+	Draft draft;
+};
+
+// Start and stop the heartbeat. Enter() spawns a thread that calls pd_tick
+// every couple of seconds; Leave() stops it and tells the room we have gone.
+//
+// Enter() returns immediately - every tick happens on the heartbeat thread, so
+// a two-second network call is never a stalled frame.
+//
+// ⚠️ Leave() BLOCKS, for as long as the current nap plus one round trip. It has
+// to: the row has to actually go, and saying so from a detached thread would
+// race an Enter() that followed it and delete the new room's membership. A
+// scene change is the only place it is called and a short stall there is
+// invisible.
+void Enter(const std::string &room);
+void Leave();
+
+// Pressed Start, or stepped out of the queue. Takes effect on the next tick
+// rather than immediately, which is why it returns nothing to check.
+void SetQueued(bool queued);
+
+// What we picked, reported on the next tick. Each client may only report its
+// OWN character; either of the two may report the stage.
+void ReportPick(int character, int color, int stage);
+
+// The most recent reply. Copied out under the lock, so the caller can read it
+// at its leisure without holding anything up.
+State Latest();
 } // namespace Rooms
