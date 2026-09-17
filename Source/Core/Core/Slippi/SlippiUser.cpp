@@ -14,23 +14,22 @@ using json = nlohmann::json;
 
 // ---------------------------------------------------------- Rooms identity ---
 //
-// Rooms runs its own matchmaking, so a slippi.gg account buys us nothing: there
-// is no server of theirs to authenticate against. A player is whoever
-// peppy.json says they are.
+// A DEVELOPMENT identity, and only that now.
 //
-// When that file is present it replaces the login entirely - user.json is never
-// opened and the play key inside it is never read. Without this the online menu
-// shows nothing but "Log-in", because every option behind it is gated on being
-// logged in.
+// This used to replace the login outright, on the reasoning that rooms ran
+// their own matchmaking so a slippi.gg account bought us nothing. That
+// reasoning is dead: two players in a room are introduced by Slippi's own
+// servers as a DIRECT match, which needs a real account and a real connect
+// code. An identity we invented cannot be searched for by anybody.
 //
-// Falls through to the normal Slippi login when the file is absent, so a build
-// with no peppy.json behaves exactly like upstream. That fall-through is what
-// keeps this a small, reversible change rather than a fork of the login.
+// So the real login wins wherever there is one, and this answers only when
+// there is not - which keeps a rig with no Slippi account able to reach the
+// menus and the room screen. It cannot start a match, and that is the honest
+// outcome rather than a failure three layers down inside matchmaking.
 //
 // This is NOT the Supabase identity. That one is anonymous, arrives over the
-// network, and lives in RoomsBackend; this is only what Melee is told so it
-// will draw the menu. When the real Slippi user is wired up, both collapse into
-// it.
+// network and lives in the Rooms backend; this is only what Melee is told so it
+// will draw the menu.
 namespace
 {
 std::once_flag s_rooms_once;
@@ -104,13 +103,23 @@ SlippiUser::~SlippiUser() {}
 
 bool SlippiUser::AttemptLogin()
 {
-	// Already "logged in" as whoever Rooms says we are - never send the player
-	// off to slippi.gg to make an account they do not need.
-	LoadRoomsIdentity();
-	if (s_rooms_present)
+	// The REAL login first, and that ordering is the whole change.
+	//
+	// This used to answer from peppy.json and never open user.json at all,
+	// because rooms ran their own matchmaking and a slippi.gg account bought us
+	// nothing. That is no longer true: two players in a room are introduced by
+	// Slippi's own servers as a DIRECT match, which needs a real account and a
+	// real connect code. An identity we invented cannot be searched for.
+	//
+	// peppy.json stays as the FALLBACK, so a rig with no Slippi account still
+	// reaches the menus and the room screen for development. It just cannot
+	// start a match, which is the honest behaviour rather than a silent failure
+	// three layers down.
+	if (slprs_user_attempt_login(slprs_exi_device_ptr))
 		return true;
 
-	return slprs_user_attempt_login(slprs_exi_device_ptr);
+	LoadRoomsIdentity();
+	return s_rooms_present;
 }
 
 void SlippiUser::OpenLogInPage()
@@ -140,9 +149,13 @@ void SlippiUser::OverwriteLatestVersion(std::string version)
 
 SlippiUser::UserInfo SlippiUser::GetUserInfo()
 {
-	LoadRoomsIdentity();
-	if (s_rooms_present)
-		return s_rooms_user;
+	// A real login wins. Only when there is none does peppy.json answer.
+	if (!slprs_user_get_is_logged_in(slprs_exi_device_ptr))
+	{
+		LoadRoomsIdentity();
+		if (s_rooms_present)
+			return s_rooms_user;
+	}
 
 	SlippiUser::UserInfo userInfo;
 
@@ -171,9 +184,9 @@ std::vector<std::string> SlippiUser::GetUserChatMessages()
 
 bool SlippiUser::IsLoggedIn()
 {
-	LoadRoomsIdentity();
-	if (s_rooms_present)
+	if (slprs_user_get_is_logged_in(slprs_exi_device_ptr))
 		return true;
 
-	return slprs_user_get_is_logged_in(slprs_exi_device_ptr);
+	LoadRoomsIdentity();
+	return s_rooms_present;
 }

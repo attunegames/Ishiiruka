@@ -247,6 +247,16 @@ bool SignIn()
 	return false;
 }
 
+void SetIdentity(const std::string &name, const std::string &connect_code)
+{
+	if (!name.empty())
+		s_config.name = name;
+	if (!connect_code.empty())
+		s_config.connect_code = connect_code;
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] playing as %s (%s)", s_config.name.c_str(),
+	         s_config.connect_code.c_str());
+}
+
 std::string Rpc(const std::string &fn, const std::string &args_json)
 {
 	if (!SignedIn() && !SignIn())

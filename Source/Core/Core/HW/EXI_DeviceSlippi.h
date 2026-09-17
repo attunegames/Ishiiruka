@@ -350,6 +350,7 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomCreate(u8 *payload);
 	void handleRoomQueue(u8 *payload);
 	void handleRoomJoin(u8 *payload);
+	void tellRoomsWhoWeAre();
 	void prepareRoomState();
 	void handleRoomList(u8 *payload);
 	void prepareRoomList();

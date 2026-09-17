@@ -37,6 +37,17 @@ struct Config
 	bool loaded = false;
 };
 
+// Who the room publishes us as.
+//
+// ⚠️ This has to be the REAL Slippi connect code once there is a login, because
+// it is what the other client asks Slippi to connect to. A code out of
+// peppy.json that no Slippi account owns is a DIRECT search for somebody who
+// does not exist, and it fails as a timeout rather than as an error.
+//
+// Called before the heartbeat starts. Empty arguments leave the config's own
+// values alone, which is what a development rig with no account falls back to.
+void SetIdentity(const std::string &name, const std::string &connect_code);
+
 // Loads the config and gets a session, reusing the stored refresh token when
 // there is one and signing in anonymously when there is not. Safe to call more
 // than once; it only works the first time.

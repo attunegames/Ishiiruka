@@ -2812,6 +2812,8 @@ void CEXISlippi::handleRoomCreate(u8 *payload)
 		return;
 	}
 
+	tellRoomsWhoWeAre();
+
 	std::string name = kModes[mode];
 	// Enters the room it just made, so the person who opened it is in it. The
 	// heartbeat is what actually creates the membership row - pd_tick inserts on
@@ -2836,8 +2838,18 @@ void CEXISlippi::handleRoomQueue(u8 *payload)
 // Starts the heartbeat, which is what actually puts a member row in the room -
 // pd_tick inserts on first call. There is no separate join request to get out
 // of step with it.
+// Whoever Slippi says we are, before anything talks to the room. The connect
+// code the room publishes is what the OTHER client will ask Slippi to connect
+// to, so it has to be the real one.
+void CEXISlippi::tellRoomsWhoWeAre()
+{
+	SlippiUser::UserInfo info = user->GetUserInfo();
+	Rooms::SetIdentity(info.displayName, info.connectCode);
+}
+
 void CEXISlippi::handleRoomJoin(u8 *payload)
 {
+	tellRoomsWhoWeAre();
 	std::string code((char *)payload, ROOM_CODE_LEN);
 	// Melee pads with spaces rather than nulls.
 	while (!code.empty() && (code.back() == ' ' || code.back() == '\0'))
