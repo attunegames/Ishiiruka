@@ -2962,6 +2962,14 @@ void CEXISlippi::prepareRoomState()
 	if (s.ready)
 		flags |= ROOM_FLAG_READY;
 
+	// ⚠️ And only when it is OUR match. A connection being up does not say
+	// whose: a third person walking into the queue while two others are being
+	// introduced has one too, and used to be sent to the draft to counterpick
+	// for a game they were not in.
+	if (s.ready && matchmaking &&
+	    matchmaking->GetMatchmakeState() == SlippiMatchmaking::CONNECTION_SUCCESS)
+		flags |= ROOM_FLAG_CONNECTED;
+
 	auto pick = [](int v) -> u8 {
 		return v == Rooms::Draft::NOT_PICKED ? (u8)ROOM_NOT_PICKED : (u8)v;
 	};

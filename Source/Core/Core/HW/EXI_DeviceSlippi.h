@@ -49,6 +49,14 @@
 // connect. Distinct from PLAYING, which means a match is already under way.
 #define ROOM_FLAG_READY 0x04
 
+// Bit 4: Slippi says the two are actually CONNECTED.
+//
+// ⚠️ The handoff to the draft waits on this and not a moment earlier. The
+// screens past it fork on the same state, and anything below CONNECTION_SUCCESS
+// lands them in their "searching" branch - where a character cannot be locked
+// in. Handing over early means arriving at a screen that refuses to start.
+#define ROOM_FLAG_CONNECTED 0x08
+
 // 0xFF rather than 0 for "not picked": 0 is Captain Falcon and a real stage.
 #define ROOM_NOT_PICKED 0xFF
 
