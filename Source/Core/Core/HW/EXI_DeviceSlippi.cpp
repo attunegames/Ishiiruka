@@ -11,6 +11,7 @@
 #include <SlippiLib/SlippiGame.h>
 
 #include <semver/include/semver200.h>
+#include <algorithm> // std::min, in the room state reply
 #include <utility> // std::move
 
 #include "Common/CommonPaths.h"
@@ -2812,8 +2813,99 @@ void CEXISlippi::handleRoomCreate(u8 *payload)
 	}
 
 	std::string name = kModes[mode];
-	std::thread([name, listed]() { Rooms::CreateRoom(name, listed); }).detach();
+	// Enters the room it just made, so the person who opened it is in it. The
+	// heartbeat is what actually creates the membership row - pd_tick inserts on
+	// its first call - so there is no separate join to fall out of step with.
+	std::thread([name, listed]() {
+		std::string room = Rooms::CreateRoom(name, listed);
+		if (!room.empty())
+			Rooms::Enter(room);
+	}).detach();
 }
+// Rooms: pressed Start, or stepped back out of the queue.
+//
+// Takes effect on the next tick rather than now. Nothing here waits on the
+// network - the heartbeat is already running and will carry it.
+void CEXISlippi::handleRoomQueue(u8 *payload)
+{
+	Rooms::SetQueued(payload[0] != 0);
+}
+
+// Rooms: join a room by code.
+//
+// Starts the heartbeat, which is what actually puts a member row in the room -
+// pd_tick inserts on first call. There is no separate join request to get out
+// of step with it.
+void CEXISlippi::handleRoomJoin(u8 *payload)
+{
+	std::string code((char *)payload, ROOM_CODE_LEN);
+	// Melee pads with spaces rather than nulls.
+	while (!code.empty() && (code.back() == ' ' || code.back() == '\0'))
+		code.pop_back();
+
+	if (code.empty())
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] join was asked for an empty code");
+		return;
+	}
+	Rooms::Enter(code);
+}
+
+// Rooms: everything the room screen draws, in one fixed-size reply.
+//
+// ⚠️ The layout is written out in EXI_DeviceSlippi.h and duplicated by hand in
+// the game module's rooms.h. Change both or the module reads the wrong bytes -
+// it will not fail to build, it will just draw nonsense.
+//
+// Never blocks. The heartbeat already fetched this; here we only copy out what
+// it last saw, so asking every frame costs nothing.
+void CEXISlippi::prepareRoomState()
+{
+	m_read_queue.clear();
+
+	Rooms::State s = Rooms::Latest();
+
+	u8 flags = 0;
+	if (s.valid)
+		flags |= 0x01;
+	if (s.draft.playing)
+		flags |= 0x02;
+
+	auto pick = [](int v) -> u8 {
+		return v == Rooms::Draft::NOT_PICKED ? (u8)ROOM_NOT_PICKED : (u8)v;
+	};
+
+	m_read_queue.push_back(flags);
+	m_read_queue.push_back((u8)std::min<size_t>(s.queue.size(), ROOM_STATE_MAX_QUEUE));
+	m_read_queue.push_back((u8)std::min<size_t>(s.lobby.size(), ROOM_STATE_MAX_LOBBY));
+	m_read_queue.push_back((u8)std::min(s.position, 255));
+	m_read_queue.push_back(pick(s.draft.host_char));
+	m_read_queue.push_back((u8)s.draft.host_color);
+	m_read_queue.push_back(pick(s.draft.guest_char));
+	m_read_queue.push_back((u8)s.draft.guest_color);
+	m_read_queue.push_back(pick(s.draft.stage));
+	m_read_queue.push_back(0);
+	m_read_queue.push_back(0);
+	m_read_queue.push_back(0);
+
+	// Names, in a fixed order so the module can index rather than parse: the
+	// two playing, then the queue, then the lobby. Missing entries are blank
+	// rather than absent, which is what keeps every slot at a known offset.
+	auto put_name = [&](const std::string &name) {
+		std::string game = ConvertStringForGame(name, MAX_NAME_LENGTH);
+		game.resize(ROOM_STATE_NAME_LEN, '\0');
+		for (int i = 0; i < ROOM_STATE_NAME_LEN; i++)
+			m_read_queue.push_back((u8)game[i]);
+	};
+
+	for (int i = 0; i < 2; i++)
+		put_name(i < (int)s.active.size() ? s.active[i].name : "");
+	for (int i = 0; i < ROOM_STATE_MAX_QUEUE; i++)
+		put_name(i < (int)s.queue.size() ? s.queue[i].name : "");
+	for (int i = 0; i < ROOM_STATE_MAX_LOBBY; i++)
+		put_name(i < (int)s.lobby.size() ? s.lobby[i].name : "");
+}
+
 
 void CEXISlippi::prepareFileLength(u8 *payload)
 {
@@ -3497,6 +3589,15 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_ROOM_CREATE:
 			handleRoomCreate(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_QUEUE:
+			handleRoomQueue(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_JOIN:
+			handleRoomJoin(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_STATE:
+			prepareRoomState();
 			break;
 		case CMD_FILE_LENGTH:
 			prepareFileLength(&memPtr[bufLoc + 1]);

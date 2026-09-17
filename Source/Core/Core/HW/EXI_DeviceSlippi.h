@@ -20,6 +20,26 @@
 #include "Core/Slippi/SlippiUser.h"
 
 #define MAX_NAME_LENGTH 15
+
+// Rooms: the shape of the CMD_ROOM_STATE reply.
+//
+// ⚠️ This layout is duplicated, by hand, in the game module's rooms.h. There is
+// no generator and no shared header - one side is C++ compiled for the host,
+// the other is PowerPC compiled for Melee - so a field added here and not there
+// reads silently wrong bytes rather than failing to build. Change both.
+//
+// Fixed size on purpose: the module reads it into a struct at a known offset
+// and a variable-length reply would need a parser on the PowerPC side.
+#define ROOM_CODE_LEN       4    // rooms are four characters, e.g. 8NXU
+#define ROOM_STATE_NAME_LEN 32   // ConvertStringForGame gives 31, padded to 32
+#define ROOM_STATE_MAX_QUEUE 6
+#define ROOM_STATE_MAX_LOBBY 6
+#define ROOM_STATE_NAMES (2 + ROOM_STATE_MAX_QUEUE + ROOM_STATE_MAX_LOBBY)
+#define ROOM_STATE_HEADER 12
+#define ROOM_STATE_SIZE (ROOM_STATE_HEADER + ROOM_STATE_NAMES * ROOM_STATE_NAME_LEN)
+
+// 0xFF rather than 0 for "not picked": 0 is Captain Falcon and a real stage.
+#define ROOM_NOT_PICKED 0xFF
 #define MAX_MESSAGE_LENGTH 25
 #define CONNECT_CODE_LENGTH 8
 
@@ -96,6 +116,9 @@ class CEXISlippi : public IEXIDevice
 		// Rooms: its own rooms. 0xC5 up is clear of everything Slippi uses -
 		// their ids run to 0xC4 and then resume at 0xD1.
 		CMD_ROOM_CREATE = 0xC5,
+		CMD_ROOM_QUEUE = 0xC6,  // pressed Start, or stepped back out
+		CMD_ROOM_JOIN = 0xC8,   // a room code, from the browser or typed
+		CMD_ROOM_STATE = 0xC9,  // read back: everything the room screen draws
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -188,6 +211,9 @@ class CEXISlippi : public IEXIDevice
 	    // Misc
 	    // Rooms: mode byte, then listed/unlisted.
 	    {CMD_ROOM_CREATE, 0x2},
+	    {CMD_ROOM_QUEUE, 0x1},        // one byte: queued or not
+	    {CMD_ROOM_JOIN, ROOM_CODE_LEN},
+	    {CMD_ROOM_STATE, 0x0},        // asks for the reply, sends nothing
 
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
@@ -286,6 +312,9 @@ class CEXISlippi : public IEXIDevice
 	void handleChatMessage(u8 *payload);
 	void logMessageFromGame(u8 *payload);
 	void handleRoomCreate(u8 *payload);
+	void handleRoomQueue(u8 *payload);
+	void handleRoomJoin(u8 *payload);
+	void prepareRoomState();
 	void prepareFileLength(u8 *payload);
 	void prepareFileLoad(u8 *payload);
 	void prepareGctLength();
