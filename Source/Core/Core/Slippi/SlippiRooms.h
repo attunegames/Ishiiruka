@@ -133,4 +133,28 @@ void ReportPick(int character, int color, int stage);
 // The most recent reply. Copied out under the lock, so the caller can read it
 // at its leisure without holding anything up.
 State Latest();
+
+// --------------------------------------------------------------- browsing --
+
+struct Listing
+{
+	std::string code;   // four characters, e.g. 8NXU
+	std::string mode;   // singles | doubles | ironmans | crew | tournament
+	std::string owner;  // who opened it
+	int players = 0;    // how many are actually still talking to it
+};
+
+// Fetch the public rooms. `mode` filters; empty means every kind, which is what
+// Public asks for - it is reached before a kind has been chosen, so each room
+// says which it is instead.
+//
+// Blocking, so it runs on its own thread. The result goes where Rooms() can
+// find it rather than coming back, because the caller is an EXI command that
+// has to return to the game this frame.
+void FetchRooms(const std::string &mode);
+
+// What the last fetch found. Empty until one has come back - which is not the
+// same as "there are no rooms", and the browser has to say so differently.
+std::vector<Listing> Rooms();
+bool RoomsFetched();
 } // namespace Rooms

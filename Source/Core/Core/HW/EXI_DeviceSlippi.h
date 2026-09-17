@@ -40,6 +40,26 @@
 
 // 0xFF rather than 0 for "not picked": 0 is Captain Falcon and a real stage.
 #define ROOM_NOT_PICKED 0xFF
+
+// Rooms: the shape of the CMD_ROOM_LIST_READ reply. Duplicated by hand in the
+// module's rooms.h, exactly like the room state above - change both.
+//
+//   +0x00  u8  flags   bit0 = a fetch has come back at all
+//   +0x01  u8  count
+//   +0x02  u8  pad[2]
+//   +0x04  rooms, 48 bytes each:
+//            +0x00  char code[8]    four characters, null-terminated
+//            +0x08  u8   mode       index into the menu's kinds, 0xFF unknown
+//            +0x09  u8   players
+//            +0x0A  u8   pad[2]
+//            +0x0C  char owner[32]  who opened it
+//            +0x2C  u8   pad[4]
+#define ROOM_LIST_MAX     8
+#define ROOM_LIST_STRIDE  48
+#define ROOM_LIST_HEADER  4
+#define ROOM_LIST_SIZE    (ROOM_LIST_HEADER + ROOM_LIST_MAX * ROOM_LIST_STRIDE)
+#define ROOM_LIST_FETCHED 0x01
+#define ROOM_MODE_UNKNOWN 0xFF
 #define MAX_MESSAGE_LENGTH 25
 #define CONNECT_CODE_LENGTH 8
 
@@ -119,6 +139,8 @@ class CEXISlippi : public IEXIDevice
 		CMD_ROOM_QUEUE = 0xC6,  // pressed Start, or stepped back out
 		CMD_ROOM_JOIN = 0xC8,   // a room code, from the browser or typed
 		CMD_ROOM_STATE = 0xC9,  // read back: everything the room screen draws
+		CMD_ROOM_LIST = 0xC7,   // go and fetch the public rooms
+		CMD_ROOM_LIST_READ = 0xCA, // read back what the fetch found
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -214,6 +236,8 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_ROOM_QUEUE, 0x1},        // one byte: queued or not
 	    {CMD_ROOM_JOIN, ROOM_CODE_LEN},
 	    {CMD_ROOM_STATE, 0x0},        // asks for the reply, sends nothing
+	    {CMD_ROOM_LIST, 0x1},         // one byte: which mode, 0xFF for any
+	    {CMD_ROOM_LIST_READ, 0x0},
 
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
@@ -315,6 +339,8 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomQueue(u8 *payload);
 	void handleRoomJoin(u8 *payload);
 	void prepareRoomState();
+	void handleRoomList(u8 *payload);
+	void prepareRoomList();
 	void prepareFileLength(u8 *payload);
 	void prepareFileLoad(u8 *payload);
 	void prepareGctLength();

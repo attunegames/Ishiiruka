@@ -2859,6 +2859,82 @@ void CEXISlippi::handleRoomJoin(u8 *payload)
 //
 // Never blocks. The heartbeat already fetched this; here we only copy out what
 // it last saw, so asking every frame costs nothing.
+// Rooms: go and fetch the public rooms.
+//
+// One byte, the mode to filter by, or 0xFF for every kind - which is what
+// Public asks for, since it is reached before a kind has been chosen. Detached,
+// because this talks to the network and the CPU thread is mid-frame; the game
+// reads the answer later with CMD_ROOM_LIST_READ.
+void CEXISlippi::handleRoomList(u8 *payload)
+{
+	static const char *kModes[] = {"singles", "doubles", "ironmans", "crew", "tournament"};
+	const u8 mode = payload[0];
+
+	std::string filter;
+	if (mode < sizeof(kModes) / sizeof(kModes[0]))
+		filter = kModes[mode];
+
+	std::thread([filter]() { Rooms::FetchRooms(filter); }).detach();
+}
+
+// Rooms: what the fetch found.
+//
+// ⚠️ The layout is in EXI_DeviceSlippi.h and duplicated by hand in the module's
+// rooms.h. Change both or the browser draws nonsense without failing to build.
+//
+// The FETCHED flag matters: "nothing has come back yet" and "there are no
+// public rooms" look identical as an empty list, and the browser has to say
+// something different for each. A browser that says "no rooms" before its first
+// reply has arrived is simply lying.
+void CEXISlippi::prepareRoomList()
+{
+	m_read_queue.clear();
+
+	std::vector<Rooms::Listing> rooms = Rooms::Rooms();
+	const size_t n = std::min<size_t>(rooms.size(), ROOM_LIST_MAX);
+
+	m_read_queue.push_back(Rooms::RoomsFetched() ? ROOM_LIST_FETCHED : 0);
+	m_read_queue.push_back((u8)n);
+	m_read_queue.push_back(0);
+	m_read_queue.push_back(0);
+
+	static const char *kModes[] = {"singles", "doubles", "ironmans", "crew", "tournament"};
+
+	for (size_t i = 0; i < ROOM_LIST_MAX; i++)
+	{
+		u8 entry[ROOM_LIST_STRIDE] = {};
+
+		if (i < n)
+		{
+			const Rooms::Listing &l = rooms[i];
+
+			// Four characters and a null. Truncated rather than wrapped: a room
+			// code is always four, and anything else is a row nobody can type.
+			for (size_t c = 0; c < 7 && c < l.code.size(); c++)
+				entry[c] = (u8)l.code[c];
+
+			entry[0x08] = ROOM_MODE_UNKNOWN;
+			for (size_t m = 0; m < sizeof(kModes) / sizeof(kModes[0]); m++)
+			{
+				if (l.mode == kModes[m])
+				{
+					entry[0x08] = (u8)m;
+					break;
+				}
+			}
+			entry[0x09] = (u8)std::min(l.players, 255);
+
+			std::string owner = ConvertStringForGame(l.owner, MAX_NAME_LENGTH);
+			owner.resize(32, '\0');
+			for (int c = 0; c < 32; c++)
+				entry[0x0C + c] = (u8)owner[c];
+		}
+
+		for (int b = 0; b < ROOM_LIST_STRIDE; b++)
+			m_read_queue.push_back(entry[b]);
+	}
+}
+
 void CEXISlippi::prepareRoomState()
 {
 	m_read_queue.clear();
@@ -3598,6 +3674,12 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_ROOM_STATE:
 			prepareRoomState();
+			break;
+		case CMD_ROOM_LIST:
+			handleRoomList(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_LIST_READ:
+			prepareRoomList();
 			break;
 		case CMD_FILE_LENGTH:
 			prepareFileLength(&memPtr[bufLoc + 1]);

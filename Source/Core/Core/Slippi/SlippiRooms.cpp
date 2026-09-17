@@ -492,3 +492,74 @@ State Latest()
 	return s_state;
 }
 } // namespace Rooms
+
+// ----------------------------------------------------------------- browsing --
+
+namespace
+{
+std::mutex s_rooms_lock;
+std::vector<Rooms::Listing> s_rooms;
+bool s_rooms_fetched = false;
+} // namespace
+
+namespace Rooms
+{
+void FetchRooms(const std::string &mode)
+{
+	json args = json::object();
+	// Public is reached before a kind has been chosen, so it asks for every
+	// kind. pd_room_list takes null for that, not a wildcard string.
+	if (!mode.empty())
+		args["p_mode"] = mode;
+
+	std::string reply = Rpc("pd_room_list", args.dump());
+	if (reply.empty())
+		return; // Rpc already said why.
+
+	std::vector<Listing> found;
+	try
+	{
+		json j = json::parse(reply);
+		auto rooms = j.find("rooms");
+		if (rooms != j.end() && rooms->is_array())
+		{
+			for (const auto &r : *rooms)
+			{
+				Listing l;
+				l.code = r.value("code", "");
+				l.mode = r.value("mode", "");
+				l.owner = r.value("owner", "");
+				l.players = r.value("players", 0);
+				found.push_back(l);
+			}
+		}
+	}
+	catch (const std::exception &e)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] could not read the room list: %s", e.what());
+		return;
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(s_rooms_lock);
+		s_rooms = found;
+		// ⚠️ Only set once something actually came back. "Nothing found yet" and
+		// "there are no rooms" look the same on screen and want different words,
+		// and a browser that says "no rooms" before its first reply is lying.
+		s_rooms_fetched = true;
+	}
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] %d public room(s)", (int)found.size());
+}
+
+std::vector<Listing> Rooms()
+{
+	std::lock_guard<std::mutex> lock(s_rooms_lock);
+	return s_rooms;
+}
+
+bool RoomsFetched()
+{
+	std::lock_guard<std::mutex> lock(s_rooms_lock);
+	return s_rooms_fetched;
+}
+} // namespace Rooms
