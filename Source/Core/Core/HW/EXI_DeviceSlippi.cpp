@@ -55,6 +55,32 @@
 static std::unordered_map<u8, std::string> slippi_names;
 static std::unordered_map<u8, std::string> slippi_connect_codes;
 
+// ------------------------------------------------- Rooms: ending a session ---
+//
+// A finished room game has to put the match down before Melee is asked about it
+// again, and the old branch found out the hard way what happens if it does not:
+//
+//   Melee asks prepareOnlineMatchState whether it has a match every time it
+//   reaches the character select, and until the matchmaking state is CLEARED
+//   the answer is still yes - the same match, long since disconnected. So Melee
+//   starts it, it ends immediately, and the character select's request to go to
+//   the room is overruled about fifty milliseconds later by the versus splash.
+//
+// Deferred rather than done on the spot, because the game-end handler is not a
+// good place to destroy the objects the frame after it is still using them.
+// ⚠ s_rooms_cleanup_busy is what makes it safe to search again: the old
+// matchmaking and netplay clients are destroyed on a DETACHED thread and they
+// still hold their port while they go.
+std::atomic<bool> s_rooms_cleanup_busy(false);
+bool s_rooms_end_session = false;
+u64 s_rooms_end_session_at = 0;
+
+bool RoomsCleanupBusy()
+{
+	return s_rooms_cleanup_busy.load();
+}
+
+
 extern std::unique_ptr<SlippiPlaybackStatus> g_playbackStatus;
 extern std::unique_ptr<SlippiReplayComm> g_replayComm;
 
@@ -2113,6 +2139,19 @@ void CEXISlippi::handleNameEntryLoad(u8 *payload)
 
 void CEXISlippi::prepareOnlineMatchState()
 {
+	// Rooms: a finished game ends the session HERE, before anything is answered.
+	// See s_rooms_end_session - without this Melee restarts the match it was
+	// just told about and the room never gets its turn.
+	if (s_rooms_end_session && !s_rooms_cleanup_busy.load() &&
+	    Common::Timer::GetTimeMs() - s_rooms_end_session_at > 250)
+	{
+		s_rooms_end_session = false;
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] game over - clearing the match so the room can have it");
+		handleConnectionCleanup();
+		prepareOnlineMatchState(); // answer again, with nothing to play
+		return;
+	}
+
 	SConfig::GetInstance().m_EmulationSpeed = 1.0f; // force 100% speed
 
 	// This match block is a VS match with P1 Red Falco vs P2 Red Bowser vs P3 Young Link vs P4 Young Link
@@ -2963,7 +3002,11 @@ void CEXISlippi::prepareRoomState()
 		flags |= 0x01;
 	if (s.draft.playing)
 		flags |= 0x02;
-	if (s.ready)
+	// ⚠ Not while the last match is still being put down. The old matchmaking
+	// and netplay clients are destroyed on a detached thread and hold their port
+	// until they are gone; telling the room it may start now would have the next
+	// search racing the last one's cleanup for it.
+	if (s.ready && !RoomsCleanupBusy())
 		flags |= ROOM_FLAG_READY;
 
 	// ⚠️ And only when it is OUR match. A connection being up does not say
@@ -3288,6 +3331,8 @@ void doConnectionCleanup(std::unique_ptr<SlippiMatchmaking> mm, std::unique_ptr<
 
 	if (nc)
 		nc.reset();
+
+	s_rooms_cleanup_busy.store(false);
 }
 
 void CEXISlippi::handleConnectionCleanup()
@@ -3295,6 +3340,7 @@ void CEXISlippi::handleConnectionCleanup()
 	ERROR_LOG(SLIPPI_ONLINE, "Connection cleanup started...");
 
 	// Handle destructors in a separate thread to not block the main thread
+	s_rooms_cleanup_busy.store(true);
 	std::thread cleanup(doConnectionCleanup, std::move(matchmaking), std::move(slippi_netplay));
 	cleanup.detach();
 
@@ -3353,6 +3399,55 @@ void CEXISlippi::handleReportGame(const SlippiExiTypes::ReportGameQuery &query)
 	          onlineMode, query.onlineMode, durationFrames, gameIndex, tiebreakIndex, winnerIdx, stageId, gameEndMethod,
 	          lrasInitiator);
 
+	// Rooms: the room needs to know who won, so the winner can stay and the
+	// loser can go to the back of the queue. Melee just handed us the winning
+	// port, so there is nothing to infer.
+	//
+	// Then the session ENDS. A finished game sends everybody back to the room
+	// and the next two are paired from there - rematching in place would skip
+	// four of the five steps the room exists for, and somebody watching from the
+	// queue would sit through game after game without ever coming up.
+	//
+	// ⚠ NOT straight back into matchmaking. The old branch requeued here and
+	// it is what stopped anyone ever reaching the room: the search restarts
+	// inside the few hundred milliseconds the character select is up, Melee
+	// starts a match from a result it still had lying around, and the handler
+	// that would have sent you to the room never gets a turn. The clearing is
+	// deferred instead - see s_rooms_end_session.
+	Rooms::State rs = Rooms::Latest();
+	if (matchmaking && !rs.match_id.empty())
+	{
+		int myIdx = matchmaking->LocalPlayerIndex();
+
+		if (winnerIdx >= 0 && winnerIdx < 4)
+		{
+			Rooms::ReportResult(rs.match_id, winnerIdx == myIdx,
+			                    query.players[winnerIdx].stocksRemaining);
+		}
+		else if (gameEndMethod == 7 && lrasInitiator >= 0)
+		{
+			// Somebody quit out. Melee names no winner, but it does name who
+			// left, and whoever left lost.
+			Rooms::ReportResult(rs.match_id, lrasInitiator != myIdx, 0);
+		}
+		else
+		{
+			// ⚠ A genuine draw. Nothing is reported, so the pairing stays open
+			// rather than recording a winner we would be inventing.
+			ERROR_LOG(SLIPPI_ONLINE, "[Rooms] no result to report: winnerIdx %d, myIdx %d, endMethod %d",
+			          winnerIdx, myIdx, gameEndMethod);
+		}
+
+		if (slippi_netplay)
+		{
+			WARN_LOG(SLIPPI_ONLINE, "[Rooms] game over - everybody back to the room");
+			slippi_netplay->ForceDisconnect();
+		}
+
+		s_rooms_end_session = true;
+		s_rooms_end_session_at = Common::Timer::GetTimeMs();
+	}
+
 	auto userInfo = user->GetUserInfo();
 
 	// We pass `uid` and `playKey` here until the User side of things is
@@ -3383,48 +3478,6 @@ void CEXISlippi::handleReportGame(const SlippiExiTypes::ReportGameQuery &query)
 		                                                    colorId, startingStocks, startingPercent);
 
 		slprs_game_report_add_player_report(gameReport, playerReport);
-	}
-
-	// Rooms: tell the room how it went. This is what actually ENDS the pairing -
-	// pd_result marks it done, sends the loser to the back of the queue and
-	// pairs whoever is next. Until it is called the pairing stays 'ready', and a
-	// ready pairing is one the room will try to start all over again the moment
-	// both players walk back in.
-	//
-	// Our own port is found by uid rather than assumed: winnerIdx is an index
-	// into the match, not into anything this client owns.
-	{
-		Rooms::State rs = Rooms::Latest();
-		if (!rs.match_id.empty())
-		{
-			int myIdx = -1;
-			for (size_t i = 0; i < mmPlayers.size(); i++)
-			{
-				if (!userInfo.uid.empty() && mmPlayers[i].uid == userInfo.uid)
-					myIdx = (int)i;
-			}
-
-			if (winnerIdx >= 0 && winnerIdx < 4 && myIdx >= 0)
-			{
-				Rooms::ReportResult(rs.match_id, winnerIdx == myIdx,
-				                    query.players[winnerIdx].stocksRemaining);
-			}
-			else if (gameEndMethod == 7 && lrasInitiator >= 0 && myIdx >= 0)
-			{
-				// Somebody quit out. Melee names no winner, but it does name who
-				// left, and whoever left lost.
-				Rooms::ReportResult(rs.match_id, lrasInitiator != myIdx, 0);
-			}
-			else
-			{
-				// ⚠ A genuine draw, or a game we cannot place ourselves in.
-				// Nothing is reported, so the pairing stays open rather than
-				// recording a winner we would be inventing.
-				ERROR_LOG(SLIPPI_ONLINE,
-				          "[Rooms] no result to report: winnerIdx %d, myIdx %d, endMethod %d",
-				          winnerIdx, myIdx, gameEndMethod);
-			}
-		}
 	}
 
 	// If ranked mode and the game ended with a quit out, this is either a desync or an interrupted game,
