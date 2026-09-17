@@ -3012,7 +3012,15 @@ void CEXISlippi::prepareRoomState()
 	// Shift-JIS and hands it to the matchmaking server that way - there is a
 	// TODO in Slippi's own code about it - so converting on this side means the
 	// module copies bytes and does not have to know about encodings at all.
-	std::string opp = UTF8ToSHIFTJIS(s.opponent_code);
+	//
+	// ⚠ ConvertConnectCodeForGame, NOT UTF8ToSHIFTJIS. The separator Slippi
+	// puts on the wire is the FULL-WIDTH hash, 0x81 0x94, because that is what
+	// Melee's own connect-code entry produces and nothing converts it back on
+	// the way to the matchmaking server. An ASCII '#' survives UTF8ToSHIFTJIS
+	// untouched and makes a code that is nearly right, which the server treats
+	// as a different code entirely - the ticket is accepted and the assignment
+	// never comes, so it reads as a timeout rather than a bad code.
+	std::string opp = ConvertConnectCodeForGame(s.opponent_code);
 	opp.resize(ROOM_STATE_OPPCODE_LEN);  // value-initialised: zero padded
 	for (int i = 0; i < ROOM_STATE_OPPCODE_LEN; i++)
 		m_read_queue.push_back((u8)opp[i]);
