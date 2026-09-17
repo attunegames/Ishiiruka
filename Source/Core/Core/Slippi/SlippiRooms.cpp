@@ -338,6 +338,16 @@ Rooms::State s_state;
 std::string s_room;          // guarded by s_state_lock
 std::atomic<bool> s_queued{false};
 
+// On our way into a room, before we know its code.
+//
+// ⚠ Making a room is two network calls - sign in, then pd_room_create - and
+// only then does Enter() have a code to store. s_room is empty for all of it,
+// so "are we in a room" answered NO for a few hundred milliseconds and the room
+// screen drew the public list before switching to the room it had just made.
+// Joining never showed this because Enter() is called straight away, with the
+// code already in hand.
+std::atomic<bool> s_entering{false};
+
 // The match we have already played, so we do not play it twice.
 //
 // ⚠ pd_result ends the pairing, but the room scene is rebuilt the moment the
@@ -486,6 +496,8 @@ namespace Rooms
 {
 void Enter(const std::string &room)
 {
+	s_entering.store(true);
+
 	Leave();
 
 	{
@@ -504,6 +516,8 @@ void Enter(const std::string &room)
 
 void Leave()
 {
+	s_entering.store(false);
+
 	if (!s_ticking.load())
 		return;
 
@@ -531,8 +545,22 @@ void Leave()
 
 bool InRoom()
 {
+	// Intent counts. See s_entering: the code arrives two network calls after
+	// the decision, and the screen cannot wait that long to know what it is.
+	if (s_entering.load())
+		return true;
 	std::lock_guard<std::mutex> lock(s_state_lock);
 	return !s_room.empty();
+}
+
+void BeginEnter()
+{
+	s_entering.store(true);
+}
+
+void AbandonEnter()
+{
+	s_entering.store(false);
 }
 
 void SetQueued(bool queued)

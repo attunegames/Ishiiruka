@@ -140,10 +140,19 @@ struct State
 void Enter(const std::string &room);
 void Leave();
 
-// Are we in a room at all? True from the moment Enter() is called, which is
-// what makes it useful: it does not wait for a tick to come back the way
-// State::valid does.
+// Are we in a room at all? True from the moment the decision is made, which is
+// what makes it useful: it waits neither for a tick to come back the way
+// State::valid does, nor for the room's code to be known.
 bool InRoom();
+
+// On our way into a room whose code we do not have yet.
+//
+// ⚠ Making a room is two network calls - sign in, then pd_room_create - and
+// Enter() cannot be told the code until they finish. Say so at the moment the
+// decision is made, so the room screen is not left guessing for the few hundred
+// milliseconds in between, and take it back if the room never gets made.
+void BeginEnter();
+void AbandonEnter();
 
 // Pressed Start, or stepped out of the queue. Takes effect on the next tick
 // rather than immediately, which is why it returns nothing to check.

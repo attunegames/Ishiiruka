@@ -2858,13 +2858,27 @@ void CEXISlippi::handleRoomCreate(u8 *payload)
 	tellRoomsWhoWeAre();
 
 	std::string name = kModes[mode];
+
+	// Said HERE, synchronously, not from the thread. Making a room is two
+	// network calls and the room screen loads while they are still in flight -
+	// so without this it asks "are we in a room" before anything can say yes,
+	// and draws the public list for a moment before the room it just made.
+	Rooms::BeginEnter();
+
 	// Enters the room it just made, so the person who opened it is in it. The
 	// heartbeat is what actually creates the membership row - pd_tick inserts on
 	// its first call - so there is no separate join to fall out of step with.
 	std::thread([name, listed]() {
 		std::string room = Rooms::CreateRoom(name, listed);
-		if (!room.empty())
-			Rooms::Enter(room);
+		if (room.empty())
+		{
+			// It never got made. Take the claim back rather than leave the
+			// screen showing a room that does not exist.
+			ERROR_LOG(SLIPPI_ONLINE, "[Rooms] the room was not created");
+			Rooms::AbandonEnter();
+			return;
+		}
+		Rooms::Enter(room);
 	}).detach();
 }
 // Rooms: pressed Start, or stepped back out of the queue.
