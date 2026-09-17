@@ -36,7 +36,18 @@
 #define ROOM_STATE_MAX_LOBBY 6
 #define ROOM_STATE_NAMES (2 + ROOM_STATE_MAX_QUEUE + ROOM_STATE_MAX_LOBBY)
 #define ROOM_STATE_HEADER 12
-#define ROOM_STATE_SIZE (ROOM_STATE_HEADER + ROOM_STATE_NAMES * ROOM_STATE_NAME_LEN)
+#define ROOM_STATE_NAMES_END (ROOM_STATE_HEADER + ROOM_STATE_NAMES * ROOM_STATE_NAME_LEN)
+
+// The opponent's connect code, Shift-JIS, ready to go straight into a
+// CMD_FIND_OPPONENT payload without the game converting anything. 18 bytes is
+// what that command takes; the extra two keep the struct aligned.
+#define ROOM_STATE_OPPCODE ROOM_STATE_NAMES_END
+#define ROOM_STATE_OPPCODE_LEN 20
+#define ROOM_STATE_SIZE (ROOM_STATE_NAMES_END + ROOM_STATE_OPPCODE_LEN)
+
+// Bit 2 of the flags byte: the pairing is on and the game should go and
+// connect. Distinct from PLAYING, which means a match is already under way.
+#define ROOM_FLAG_READY 0x04
 
 // 0xFF rather than 0 for "not picked": 0 is Captain Falcon and a real stage.
 #define ROOM_NOT_PICKED 0xFF

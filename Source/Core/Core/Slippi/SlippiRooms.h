@@ -100,6 +100,13 @@ struct State
 	std::string match_id;
 	bool is_host = false;
 
+	// Who we are matched against, and their connect code - which is the whole
+	// handoff: each side asks Slippi for a DIRECT match against the other's
+	// code and Slippi makes the introduction it already makes for every direct
+	// match. pd_members.code has carried this since part 1.
+	std::string opponent_code;
+	bool ready = false;         // the pairing is on, go and connect
+
 	std::vector<Player> active; // the two playing, host first
 	std::vector<Player> queue;  // waiting, in the order the room will pair them
 	std::vector<Player> lobby;  // present, not waiting for a game

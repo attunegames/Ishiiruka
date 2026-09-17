@@ -2947,6 +2947,8 @@ void CEXISlippi::prepareRoomState()
 		flags |= 0x01;
 	if (s.draft.playing)
 		flags |= 0x02;
+	if (s.ready)
+		flags |= ROOM_FLAG_READY;
 
 	auto pick = [](int v) -> u8 {
 		return v == Rooms::Draft::NOT_PICKED ? (u8)ROOM_NOT_PICKED : (u8)v;
@@ -2981,6 +2983,15 @@ void CEXISlippi::prepareRoomState()
 		put_name(i < (int)s.queue.size() ? s.queue[i].name : "");
 	for (int i = 0; i < ROOM_STATE_MAX_LOBBY; i++)
 		put_name(i < (int)s.lobby.size() ? s.lobby[i].name : "");
+
+	// Converted HERE rather than in the game. startFindMatch takes the code as
+	// Shift-JIS and hands it to the matchmaking server that way - there is a
+	// TODO in Slippi's own code about it - so converting on this side means the
+	// module copies bytes and does not have to know about encodings at all.
+	std::string opp = UTF8ToSHIFTJIS(s.opponent_code);
+	opp.resize(ROOM_STATE_OPPCODE_LEN);  // value-initialised: zero padded
+	for (int i = 0; i < ROOM_STATE_OPPCODE_LEN; i++)
+		m_read_queue.push_back((u8)opp[i]);
 }
 
 

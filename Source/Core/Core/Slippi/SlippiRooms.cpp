@@ -367,6 +367,11 @@ void ApplyReply(const std::string &reply)
 	s.is_host = j.value("isHost", false);
 	s.position = j.value("position", 0);
 	s.active = ReadRoster(j, "active");
+	s.ready = s.state == "ready";
+
+	auto opp = j.find("opponent");
+	if (opp != j.end() && opp->is_object())
+		s.opponent_code = opp->value("code", "");
 	s.queue = ReadRoster(j, "queue");
 	s.lobby = ReadRoster(j, "lobby");
 
