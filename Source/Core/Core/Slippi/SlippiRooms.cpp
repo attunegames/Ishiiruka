@@ -256,6 +256,14 @@ std::string Rpc(const std::string &fn, const std::string &args_json)
 
 std::string CreateRoom(const std::string &mode, bool listed)
 {
+	// ⚠️ Signed in BEFORE the arguments are built, not by Rpc afterwards.
+	// SignIn() is what loads the config, and Name() and ConnectCode() read it -
+	// so building args first sent an EMPTY name on the very first call of a
+	// session, and the room was stored owned by nobody. That is not a display
+	// bug and no amount of looking at the browser would have found it.
+	if (!SignedIn() && !SignIn())
+		return "";
+
 	json args{{"p_mode", mode}, {"p_listed", listed}, {"p_name", Name()}, {"p_code", ConnectCode()}};
 
 	std::string reply = Rpc("pd_room_create", args.dump());
@@ -385,6 +393,11 @@ void TickOnce()
 		room = s_room;
 	}
 	if (room.empty())
+		return;
+
+	// Same ordering trap as CreateRoom: sign in first, because Name() and
+	// ConnectCode() are only filled once the config has been loaded.
+	if (!Rooms::SignedIn() && !Rooms::SignIn())
 		return;
 
 	json args{{"p_room", room},
