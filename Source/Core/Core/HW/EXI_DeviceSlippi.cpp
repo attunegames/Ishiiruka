@@ -1931,6 +1931,10 @@ void CEXISlippi::startFindMatch(u8 *payload)
 		// calling dump().
 		std::string utf8Code = SHIFTJISToUTF8(shiftJisCode);
 		directCodes->AddOrUpdateCode(utf8Code);
+		// Rooms asks for a DIRECT match by code, and a code nobody owns fails as
+		// a timeout with nothing said. Print what we are actually searching for,
+		// because that is the one fact the failure hides.
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] searching DIRECT for '%s'", utf8Code.c_str());
 	}
 	else if (search.mode == SlippiMatchmaking::TEAMS)
 	{

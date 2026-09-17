@@ -197,14 +197,28 @@ const std::string &Uid()
 	return s_uid;
 }
 
+// ---------------------------------------------------------- who we really are
+//
+// ⚠ These are deliberately NOT in s_config. SetIdentity() used to write
+// straight into it, and LoadConfig() then overwrote them again with peppy.json's
+// invented name the next time somebody signed in. Which of the two won came down
+// to whether the heartbeat had already signed in before the room screen said
+// hello, so the same build published a real connect code on one rig and a
+// made-up one on the other - and the other client then searched Slippi for a
+// code no account owns, which fails as a silent timeout rather than an error.
+//
+// Slippi's answer outranks peppy.json wherever there is one.
+std::string s_identity_name;
+std::string s_identity_code;
+
 const std::string &Name()
 {
-	return s_config.name;
+	return s_identity_name.empty() ? s_config.name : s_identity_name;
 }
 
 const std::string &ConnectCode()
 {
-	return s_config.connect_code;
+	return s_identity_code.empty() ? s_config.connect_code : s_identity_code;
 }
 
 bool SignIn()
@@ -250,11 +264,10 @@ bool SignIn()
 void SetIdentity(const std::string &name, const std::string &connect_code)
 {
 	if (!name.empty())
-		s_config.name = name;
+		s_identity_name = name;
 	if (!connect_code.empty())
-		s_config.connect_code = connect_code;
-	WARN_LOG(SLIPPI_ONLINE, "[Rooms] playing as %s (%s)", s_config.name.c_str(),
-	         s_config.connect_code.c_str());
+		s_identity_code = connect_code;
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] playing as %s (%s)", Name().c_str(), ConnectCode().c_str());
 }
 
 std::string Rpc(const std::string &fn, const std::string &args_json)
