@@ -3000,6 +3000,10 @@ void CEXISlippi::prepareRoomState()
 	u8 flags = 0;
 	if (s.valid)
 		flags |= 0x01;
+	// Which of its two screens the room scene is. Answered from whether we have
+	// a room rather than from whether a tick has answered - see ROOM_FLAG_INROOM.
+	if (Rooms::InRoom())
+		flags |= ROOM_FLAG_INROOM;
 	if (s.draft.playing)
 		flags |= 0x02;
 	// ⚠ Not while the last match is still being put down. The old matchmaking

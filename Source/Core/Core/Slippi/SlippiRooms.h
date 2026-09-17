@@ -140,6 +140,11 @@ struct State
 void Enter(const std::string &room);
 void Leave();
 
+// Are we in a room at all? True from the moment Enter() is called, which is
+// what makes it useful: it does not wait for a tick to come back the way
+// State::valid does.
+bool InRoom();
+
 // Pressed Start, or stepped out of the queue. Takes effect on the next tick
 // rather than immediately, which is why it returns nothing to check.
 void SetQueued(bool queued);

@@ -57,6 +57,17 @@
 // in. Handing over early means arriving at a screen that refuses to start.
 #define ROOM_FLAG_CONNECTED 0x08
 
+// We are IN a room - we have a code and the heartbeat is running - as opposed
+// to browsing the public list.
+//
+// ⚠ Deliberately not the same question as ROOM_FLAG_VALID. Valid means a tick
+// has come BACK, which is half a second after the scene is built, and the room
+// screen used to decide which of its two screens it was from that. So a room
+// you had just made drew the public list until its first tick landed, and the
+// public list drew a room. Two half-second flashes of the wrong screen, one
+// cause.
+#define ROOM_FLAG_INROOM 0x10
+
 // 0xFF rather than 0 for "not picked": 0 is Captain Falcon and a real stage.
 #define ROOM_NOT_PICKED 0xFF
 

@@ -529,6 +529,12 @@ void Leave()
 	}
 }
 
+bool InRoom()
+{
+	std::lock_guard<std::mutex> lock(s_state_lock);
+	return !s_room.empty();
+}
+
 void SetQueued(bool queued)
 {
 	s_queued.store(queued);
