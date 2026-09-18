@@ -132,6 +132,11 @@ void SlippiWatchClient::ThreadFunc()
 	size_t connected = 0;
 	u64 lastWaitLogUs = 0;
 
+	// The peers that actually answered. ⚠️ A dial that never answers ALSO ends in
+	// a disconnect event - ENet gives up on it after 30 seconds - and that must
+	// not be mistaken for a player leaving. See the disconnect case below.
+	std::vector<ENetPeer *> live;
+
 	while (m_run.load(std::memory_order_acquire))
 	{
 		ENetEvent ev;
@@ -150,7 +155,8 @@ void SlippiWatchClient::ThreadFunc()
 			case ENET_EVENT_TYPE_CONNECT:
 			{
 				connected++;
-				WARN_LOG(SLIPPI_ONLINE, "[Watch] connected to %d of %d", (int)connected, (int)m_players.size());
+				live.push_back(ev.peer);
+				WARN_LOG(SLIPPI_ONLINE, "[Watch] connected to %d of %d", (int)connected, (int)m_needed);
 
 				// Ask for everything from the start. On a match we joined at the
 				// beginning this asks for nothing and costs one packet; on one
@@ -174,6 +180,19 @@ void SlippiWatchClient::ThreadFunc()
 				break;
 
 			case ENET_EVENT_TYPE_DISCONNECT:
+				// ⚠️ A peer we never reached, giving up. ENet reports a dial that
+				// timed out through this same event, 30 seconds after it was made,
+				// and it looks exactly like a player leaving. On a test rig that is
+				// guaranteed to happen: the two hairpin addresses are dialled and
+				// never answer, so every watch used to die half a minute in no
+				// matter how well it was going.
+				if (std::find(live.begin(), live.end(), ev.peer) == live.end())
+				{
+					WARN_LOG(SLIPPI_ONLINE, "[Watch] an address that never answered has given up - still watching");
+					m_players.erase(std::remove(m_players.begin(), m_players.end(), ev.peer), m_players.end());
+					break;
+				}
+
 				// One of them going is the end of it. We hold half a match and
 				// half a match cannot be simulated - better to say so than to
 				// show a game that is not happening.
@@ -330,14 +349,29 @@ void SlippiWatchClient::OnPacket(const u8 *data, size_t len, ENetPeer *from)
 			m_picks.colour[playerIdx] = characterColor;
 			m_toldPicks[playerIdx] = true;
 		}
+		// ⚠️ Resolved the way the players resolve it, which is "the first of them
+		// in port order who chose one" - EXI_DeviceSlippi walks orderedSelections
+		// and breaks on the first isStageSelected. Taking whichever arrived last
+		// would put the watcher on a different stage from the match.
 		if (isStageSelected)
-			m_picks.stage = stageId;
-		if (rngOffset)
+		{
+			m_stageOf[playerIdx] = stageId;
+			m_stageSet[playerIdx] = true;
+			m_picks.stage = m_stageSet[0] ? m_stageOf[0] : m_stageOf[1];
+		}
+		// ⚠️ PLAYER 0's seed, and nobody else's. Both of them generate their own
+		// rngOffset, but the match runs on the decider's, and the decider is
+		// player index 0 - EXI_DeviceSlippi does "rngOffset = isDecider ?
+		// lps.rngOffset : rps[0].rngOffset", which is player 0 either way. Taking
+		// whichever arrived last is a coin flip on the seed, and a wrong seed is
+		// every random thing in the match happening differently.
+		if (playerIdx == 0 && rngOffset)
 			m_picks.seed = rngOffset;
 		m_picks.known = m_toldPicks[0] && m_toldPicks[1];
 
-		WARN_LOG(SLIPPI_ONLINE, "[Watch] player %d is %d (colour %d), stage %d", playerIdx, characterId,
-		         characterColor, stageId);
+		WARN_LOG(SLIPPI_ONLINE, "[Watch] player %d is %d (colour %d), stage %d, seed %08x%s", playerIdx,
+		         characterId, characterColor, stageId, rngOffset,
+		         isCharacterSelected ? "" : " - NOT CHOSEN YET");
 		break;
 	}
 	case NP_MSG_SLIPPI_PAD:

@@ -286,6 +286,14 @@ class SlippiNetplayClient
 
 	void SendWatchHistoryFrom(ENetPeer *peer, s32 fromFrame);
 
+	// What we picked, as it was when THIS game started.
+	//
+	// ⚠️ StartSlippiGame ends with matchInfo.Reset(), ready for the next game, so
+	// by the time a match is on screen our own selections are all zeros. A
+	// watcher arriving mid-match was being told "character 0, colour 0, stage 0"
+	// and, having no idea what it was looking at, never started anything.
+	SlippiPlayerSelections m_watchSelections;
+
 	std::thread m_thread;
 	u8 m_remotePlayerCount = 0;
 

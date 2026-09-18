@@ -133,6 +133,11 @@ class SlippiWatchClient
 	bool m_baselined = false; // have we found where the timeline starts
 	s32 m_heard[2] = {0, 0}; // newest frame seen from each, holes and all
 	Picks m_picks;
+
+	// Each player's stage choice, kept apart so it can be resolved in port
+	// order rather than by whichever packet landed last. See OnPacket.
+	u16 m_stageOf[2] = {0, 0};
+	bool m_stageSet[2] = {false, false};
 	bool m_toldPicks[2] = {false, false};
 
 	u64 m_lastAskUs = 0;

@@ -1319,10 +1319,20 @@ void SlippiNetplayClient::ThreadFunc()
 					// Who we picked, said again just for them. Selections go out
 					// ONCE, before the game starts, so a watcher arriving after
 					// that would otherwise never learn what it is looking at.
+					//
+					// The live ones while we are still choosing, the snapshot once a
+					// game is under way - see m_watchSelections. Chosen by
+					// isCharacterSelected rather than by a "game running" flag,
+					// because that is precisely the question being asked.
+					const SlippiPlayerSelections &tell = matchInfo.localPlayerSelections.isCharacterSelected
+					                                         ? matchInfo.localPlayerSelections
+					                                         : m_watchSelections;
 					sf::Packet sel;
-					writeToPacket(sel, matchInfo.localPlayerSelections);
+					writeToPacket(sel, tell);
 					ENetPacket *epac = enet_packet_create(sel.getData(), sel.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
 					enet_peer_send(netEvent.peer, 0, epac);
+					WARN_LOG(SLIPPI_ONLINE, "[Netplay] telling the watcher we are player %d, character %d, stage %d",
+					         tell.playerIdx, tell.characterId, tell.stageId);
 					break; // Breaks out of case
 				}
 
@@ -1419,6 +1429,11 @@ void SlippiNetplayClient::StartSlippiGame()
 
 	// Clear game prep queue in case anything is still lingering
 	gamePrepStepQueue.clear();
+
+	// ⚠️ Kept BEFORE the reset below, for watchers. Once this returns, our own
+	// selections are zeros, and a watcher that connects mid-match has no other
+	// way to learn what is being played.
+	m_watchSelections = matchInfo.localPlayerSelections;
 
 	// Reset match info for next game
 	matchInfo.Reset();
