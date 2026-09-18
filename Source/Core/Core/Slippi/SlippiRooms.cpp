@@ -375,6 +375,26 @@ int PickedOr(const json &j, const char *key)
 	return it->get<int>();
 }
 
+void ReadReply(const json &j, Rooms::State &s);
+
+// A string that may be SQL NULL.
+//
+// ⚠ json::value() is not safe for a nullable column. It only returns the
+// default when the key is ABSENT - a key that is present and null still goes
+// through get<std::string>(), which throws. Postgres sends every column of a
+// json_build_object whether it has a value or not, so every nullable one is a
+// key that is present and null.
+//
+// pd_members.addr is null until somebody is in a match and publishes it, which
+// took down every client in the room the moment a pairing formed.
+std::string Str(const json &j, const char *key)
+{
+	auto it = j.find(key);
+	if (it == j.end() || !it->is_string())
+		return "";
+	return it->get<std::string>();
+}
+
 std::vector<Rooms::Player> ReadRoster(const json &j, const char *key)
 {
 	std::vector<Rooms::Player> out;
@@ -384,10 +404,10 @@ std::vector<Rooms::Player> ReadRoster(const json &j, const char *key)
 	for (const auto &m : *it)
 	{
 		Rooms::Player p;
-		p.name = m.value("name", "");
-		p.code = m.value("code", "");
+		p.name = Str(m, "name");
+		p.code = Str(m, "code");
 		p.crowns = m.value("crowns", 0);
-		p.addr = m.value("addr", "");
+		p.addr = Str(m, "addr");
 		out.push_back(p);
 	}
 	return out;
@@ -395,22 +415,50 @@ std::vector<Rooms::Player> ReadRoster(const json &j, const char *key)
 
 void ApplyReply(const std::string &reply)
 {
-	json j;
+	// ⚠ The try covers READING the reply, not just parsing it.
+	//
+	// It used to stop at json::parse, and everything that picks the reply apart
+	// sat outside it. This runs on the heartbeat thread, and an exception that
+	// leaves a thread function is std::terminate - so one nullable column turned
+	// into every client in the room disappearing, with nothing in the log and
+	// only a 0xc0000409 in the Windows event viewer to say why.
+	//
+	// A tick we cannot read is a tick to skip. There will be another in two
+	// seconds.
+	Rooms::State s;
 	try
 	{
-		j = json::parse(reply);
+		json j = json::parse(reply);
+		ReadReply(j, s);
 	}
 	catch (const std::exception &e)
 	{
 		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] could not read the tick reply: %s", e.what());
 		return;
 	}
+	catch (...)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] could not read the tick reply");
+		return;
+	}
 
-	Rooms::State s;
+	std::lock_guard<std::mutex> lock(s_state_lock);
+	// See s_played_match. The pairing is on its way out; do not start it again
+	// while it goes.
+	if (!s_played_match.empty() && s.match_id == s_played_match)
+		s.ready = false;
+	s_state = s;
+}
+
+// Everything that picks a tick reply apart. Separated so the whole of it sits
+// inside one try - see ApplyReply.
+void ReadReply(const json &j, Rooms::State &s)
+{
 	s.valid = true;
-	s.room = j.value("room", "");
-	s.state = j.value("state", "");
-	s.match_id = j.value("matchId", "");
+	s.room = Str(j, "room");
+	s.state = Str(j, "state");
+	// ⚠ Null whenever there is no pairing, which is most of the time.
+	s.match_id = Str(j, "matchId");
 	s.is_host = j.value("isHost", false);
 	s.position = j.value("position", 0);
 	s.active = ReadRoster(j, "active");
@@ -418,7 +466,7 @@ void ApplyReply(const std::string &reply)
 
 	auto opp = j.find("opponent");
 	if (opp != j.end() && opp->is_object())
-		s.opponent_code = opp->value("code", "");
+		s.opponent_code = Str(*opp, "code");
 	// Lifted out of the active roster, which has carried it all along.
 	for (const auto &p : s.active)
 	{
@@ -440,12 +488,6 @@ void ApplyReply(const std::string &reply)
 		s.draft.playing = d->value("playing", false);
 	}
 
-	std::lock_guard<std::mutex> lock(s_state_lock);
-	// See s_played_match. The pairing is on its way out; do not start it again
-	// while it goes.
-	if (!s_played_match.empty() && s.match_id == s_played_match)
-		s.ready = false;
-	s_state = s;
 }
 
 void TickOnce()
@@ -697,9 +739,11 @@ void FetchRooms(const std::string &mode)
 			for (const auto &r : *rooms)
 			{
 				Listing l;
-				l.code = r.value("code", "");
-				l.mode = r.value("mode", "");
-				l.owner = r.value("owner", "");
+				l.code = Str(r, "code");
+				l.mode = Str(r, "mode");
+				// A room whose owner never registered a name has a null here,
+				// and one null would have thrown away the whole listing.
+				l.owner = Str(r, "owner");
 				l.players = r.value("players", 0);
 				l.capacity = r.value("capacity", 8);
 				found.push_back(l);
