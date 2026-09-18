@@ -370,6 +370,12 @@ bool SlippiWatchClient::GetPad(s32 frame, u8 playerIdx, u8 *out) const
 	return true;
 }
 
+bool SlippiWatchClient::Ready() const
+{
+	std::lock_guard<std::mutex> lk(m_lock);
+	return m_picks.known && m_contiguous.load(std::memory_order_acquire) >= Slippi::GAME_FIRST_FRAME;
+}
+
 SlippiWatchClient::Picks SlippiWatchClient::GetPicks() const
 {
 	std::lock_guard<std::mutex> lk(m_lock);

@@ -376,6 +376,15 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomJoin(u8 *payload);
 	void handleRoomWatch();
 
+	// True once a watch is up and has enough to show. Everything a watcher does
+	// differently is gated on this, so a player's match takes exactly the paths
+	// it took before.
+	bool isWatching() const
+	{
+		return watch_client && watch_client->GetStatus() == SlippiWatchClient::Status::WATCHING &&
+		       watch_client->Ready();
+	}
+
 	// Watching a match in this room. Null unless we are.
 	std::unique_ptr<SlippiWatchClient> watch_client;
 	void tellRoomsWhoWeAre();

@@ -173,6 +173,16 @@ class SlippiNetplayClient
 	void SendAsync(std::unique_ptr<sf::Packet> packet);
 
 	SlippiNetplayClient(bool isDecider); // Make a dummy client
+
+	// A watcher's stand-in. No peers, no thread, no connection - it exists
+	// because the match-building code reads what everyone picked out of a
+	// netplay client, and a watcher was told all of that over its own
+	// connections instead of negotiating it.
+	//
+	// `playerIdx` is the watcher's own port, which is NOT one of the two
+	// playing. See SlippiWatchClient::WATCHER_PORT.
+	void MakeWatcher(u8 playerIdx);
+	void SetRemoteSelections(u8 remoteIdx, const SlippiPlayerSelections &s);
 	SlippiNetplayClient(std::vector<std::string> addrs, std::vector<u16> ports, const u8 remotePlayerCount,
 	                    const u16 localPort, bool isDecider, u8 playerIdx);
 	~SlippiNetplayClient();

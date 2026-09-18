@@ -1557,6 +1557,38 @@ void SlippiNetplayClient::SendSlippiPad(std::unique_ptr<SlippiPad> pad)
 	}
 }
 
+void SlippiNetplayClient::MakeWatcher(u8 idx)
+{
+	this->playerIdx = idx;
+	this->m_remotePlayerCount = 2;
+
+	// The mapping the real constructor builds: remote i is the i-th port that is
+	// not ours. With the watcher at port 2 that is ports 0 and 1, which is what
+	// we want - the two people playing, in order.
+	int j = 0;
+	for (int i = 0; i < SLIPPI_REMOTE_PLAYER_MAX; i++, j++)
+	{
+		if (j == idx)
+			j++;
+		matchInfo.remotePlayerSelections[i] = SlippiPlayerSelections();
+		matchInfo.remotePlayerSelections[i].playerIdx = j;
+	}
+
+	// Says CONNECTED so nothing downstream ends the game over a client that was
+	// never going to connect to anything. A watcher's real health is whether the
+	// timeline is still arriving, which is judged elsewhere.
+	slippiConnectStatus.store(SlippiConnectStatus::NET_CONNECT_STATUS_CONNECTED, std::memory_order_release);
+}
+
+void SlippiNetplayClient::SetRemoteSelections(u8 remoteIdx, const SlippiPlayerSelections &s)
+{
+	if (remoteIdx >= SLIPPI_REMOTE_PLAYER_MAX)
+		return;
+	u8 keepIdx = matchInfo.remotePlayerSelections[remoteIdx].playerIdx;
+	matchInfo.remotePlayerSelections[remoteIdx] = s;
+	matchInfo.remotePlayerSelections[remoteIdx].playerIdx = keepIdx;
+}
+
 void SlippiNetplayClient::SetMatchSelections(SlippiPlayerSelections &s)
 {
 	matchInfo.localPlayerSelections.Merge(s);

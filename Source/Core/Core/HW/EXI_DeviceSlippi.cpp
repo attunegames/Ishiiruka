@@ -80,6 +80,70 @@ bool RoomsCleanupBusy()
 	return s_rooms_cleanup_busy.load();
 }
 
+// Unthrottled and silent, for a watcher that is behind.
+//
+// ⚠ The lever is the frame LIMITER, not the emulated CPU clock. Overclocking
+// gives Melee more headroom inside each frame but the frames still arrive sixty
+// a second, so it costs host CPU and buys no speed.
+//
+// Muted along with it, because Melee at several times speed does not read as
+// catching up, it reads as broken. The viewer's own setting is put back
+// afterwards rather than assumed.
+static void setCatchUpSpeed(bool fast)
+{
+	static bool applied = false;
+	static bool prevMuted = false;
+
+	if (fast == applied)
+		return;
+
+	if (fast)
+	{
+		prevMuted = SConfig::GetInstance().m_IsMuted;
+		SConfig::GetInstance().m_IsMuted = true;
+	}
+	else
+	{
+		SConfig::GetInstance().m_IsMuted = prevMuted;
+	}
+	AudioCommon::UpdateSoundStream();
+	Core::SetIsThrottlerTempDisabled(fast);
+
+	applied = fast;
+	WARN_LOG(SLIPPI_ONLINE, "[Watch] catch-up %s", fast ? "on (throttle off, muted)" : "off");
+}
+
+// A watcher's opponent pads, out of the timeline instead of off a connection.
+//
+// Same shape Slippi already expects: newest frame first, one entry per frame
+// back through the rollback window.
+//
+// ⚠ latestFrame is the newest frame held for BOTH players with no hole behind
+// it, never the newest thing heard. Melee is told it may run to there and no
+// further, so it never reaches a frame it has only half of - which is the
+// divergence the old build died of, a missing player read as a neutral
+// controller and the match wrong from that frame on.
+static std::unique_ptr<SlippiRemotePadOutput> WatchRemotePad(SlippiWatchClient *watch, s32 frame, u8 port)
+{
+	auto out = std::make_unique<SlippiRemotePadOutput>();
+	out->isDisconnected = false;
+	out->checksumFrame = 0;
+	out->checksum = 0;
+
+	s32 latest = watch->LatestFrame();
+	if (latest > frame)
+		latest = frame; // never run ahead of the frame Melee is asking about
+	out->latestFrame = latest;
+
+	for (s32 f = latest; f > latest - ROLLBACK_MAX_FRAMES && f >= Slippi::GAME_FIRST_FRAME; f--)
+	{
+		u8 buf[SLIPPI_PAD_FULL_SIZE] = {};
+		watch->GetPad(f, port, buf);
+		out->data.insert(out->data.end(), buf, buf + SLIPPI_PAD_FULL_SIZE);
+	}
+	return out;
+}
+
 
 extern std::unique_ptr<SlippiPlaybackStatus> g_playbackStatus;
 extern std::unique_ptr<SlippiReplayComm> g_replayComm;
@@ -1330,6 +1394,15 @@ void CEXISlippi::handleOnlineInputs(u8 *payload)
 		return;
 	}
 
+	// A watcher only consumes. Its netplay client is a stand-in with no peers -
+	// nothing to trim, nobody to send to, and no connection to judge. Everything
+	// about this frame comes from the timeline.
+	if (isWatching())
+	{
+		prepareOpponentInputs(frame, watch_client->LatestFrame() < frame);
+		return;
+	}
+
 	// Drop inputs that we no longer need (inputs older than the finalized frame passed in)
 	slippi_netplay->DropOldRemoteInputs(finalizedFrame);
 
@@ -1552,6 +1625,29 @@ bool CEXISlippi::shouldSkipOnlineFrame(s32 frame, s32 finalizedFrame)
 
 bool CEXISlippi::shouldAdvanceOnlineFrame(s32 frame)
 {
+	// A watcher has no opponent to stay level with - it chases the timeline, and
+	// starts behind by however long the match has been going.
+	//
+	// ⚠ Two halves and it needs BOTH. The throttler off lets the emulator run
+	// faster than sixty frames a second; RESP_ADVANCE (this returning true) makes
+	// Melee loop its engine an extra time, so two frames are simulated and one is
+	// drawn. Either alone does nothing useful.
+	//
+	// ⚠ And it has to be RATIONED. Returned on every poll the frame counter
+	// races away, the engine never gets to loop, and the watcher lands on the
+	// live frame holding a state that was never simulated - nobody damaged, the
+	// clock minutes behind. One frame in two is double speed.
+	if (isWatching())
+	{
+		s32 behind = watch_client->LatestFrame() - frame;
+		setCatchUpSpeed(behind > 10);
+		if ((frame % 60) == 0)
+			WARN_LOG(SLIPPI_ONLINE, "[Watch] frame %d, live %d, %d behind, %s", frame, watch_client->LatestFrame(),
+			         behind, behind > 10 ? "catching up" : "level");
+		return behind > 10 && (frame % 2) == 0;
+	}
+	setCatchUpSpeed(false);
+
 	// If the opponent is a bot running ahead to give us more inputs, we should
 	// just keep going at our own pace rather than trying to catch up.
 	if (opponentRunahead())
@@ -1705,7 +1801,11 @@ void CEXISlippi::prepareOpponentInputs(s32 frame, bool shouldSkip)
 
 	u8 frameResult = 1; // Indicates to continue frame
 
-	auto state = slippi_netplay->GetSlippiConnectStatus();
+	// A watcher's stand-in netplay client has no peers and would report itself
+	// disconnected, which ends the game. What keeps it going is the timeline,
+	// and the timeline is what shouldSkip already reflects.
+	auto state = isWatching() ? SlippiNetplayClient::SlippiConnectStatus::NET_CONNECT_STATUS_CONNECTED
+	                          : slippi_netplay->GetSlippiConnectStatus();
 	if (shouldSkip)
 	{
 		// Event though we are skipping an input, we still want to prepare the opponent inputs because
@@ -1724,7 +1824,10 @@ void CEXISlippi::prepareOpponentInputs(s32 frame, bool shouldSkip)
 
 	m_read_queue.push_back(frameResult); // Write out the control message value
 
-	u8 remotePlayerCount = matchmaking->RemotePlayerCount();
+	// Watching: the two playing are BOTH remote, so this is two rather than the
+	// one a player has. See SlippiWatchClient::WATCHER_PORT.
+	bool watching = isWatching();
+	u8 remotePlayerCount = watching ? 2 : matchmaking->RemotePlayerCount();
 	m_read_queue.push_back(remotePlayerCount); // Indicate the number of remote players
 
 	std::unique_ptr<SlippiRemotePadOutput> results[SLIPPI_REMOTE_PLAYER_MAX];
@@ -1734,7 +1837,10 @@ void CEXISlippi::prepareOpponentInputs(s32 frame, bool shouldSkip)
 	u32 lastChecksum = 0;
 	for (int i = 0; i < remotePlayerCount; i++)
 	{
-		results[i] = slippi_netplay->GetSlippiRemotePad(i, ROLLBACK_MAX_FRAMES);
+		// Remote i is port i for a watcher, because the watcher sits at port 2
+		// and the netplay client's mapping skips its own index.
+		results[i] = watching ? WatchRemotePad(watch_client.get(), frame, (u8)i)
+		                      : slippi_netplay->GetSlippiRemotePad(i, ROLLBACK_MAX_FRAMES);
 		if (results[i]->isDisconnected)
 		{
 			continue;
@@ -2190,6 +2296,50 @@ void CEXISlippi::prepareOnlineMatchState()
 	}
 #endif
 
+	// Watching: there is a match, and everything about it arrived over the watch
+	// connections rather than being negotiated. Build what the code below expects
+	// to find and tell it we are connected.
+	if (isWatching())
+	{
+		SlippiWatchClient::Picks picks = watch_client->GetPicks();
+
+		if (!slippi_netplay)
+		{
+			slippi_netplay = std::make_unique<SlippiNetplayClient>(true);
+			slippi_netplay->MakeWatcher(SlippiWatchClient::WATCHER_PORT);
+			WARN_LOG(SLIPPI_ONLINE, "[Watch] starting %d vs %d on stage %d, seed %08x", picks.character[0],
+			         picks.character[1], picks.stage, picks.seed);
+		}
+
+		for (u8 i = 0; i < 2; i++)
+		{
+			SlippiPlayerSelections sel;
+			sel.playerIdx = i;
+			sel.characterId = picks.character[i];
+			sel.characterColor = picks.colour[i];
+			sel.isCharacterSelected = true;
+			sel.stageId = picks.stage;
+			sel.isStageSelected = true;
+			// ⚠ The seed the players ran with. Without it the watcher rolls its
+			// own and everything random - hazards, item spawns, tumble - happens
+			// differently, which is a divergence that looks like a desync.
+			sel.rngOffset = picks.seed;
+			slippi_netplay->SetRemoteSelections(i, sel);
+		}
+
+		// Ours, for a port that is not in the match. It has to look chosen or the
+		// gate below never opens, and the block marks port 2 empty so nothing is
+		// drawn for it.
+		localSelections.playerIdx = SlippiWatchClient::WATCHER_PORT;
+		localSelections.isCharacterSelected = true;
+		localSelections.isStageSelected = true;
+		localSelections.stageId = picks.stage;
+		localSelections.rngOffset = picks.seed;
+
+		localPlayerIndex = SlippiWatchClient::WATCHER_PORT;
+		mmState = SlippiMatchmaking::ProcessState::CONNECTION_SUCCESS;
+	}
+
 	m_read_queue.push_back(mmState); // Matchmaking State
 
 	u8 localPlayerReady = localSelections.isCharacterSelected;
@@ -2200,7 +2350,12 @@ void CEXISlippi::prepareOnlineMatchState()
 
 	if (mmState == SlippiMatchmaking::ProcessState::CONNECTION_SUCCESS)
 	{
-		localPlayerIndex = matchmaking->LocalPlayerIndex();
+		// ⚠ Not for a watcher. Matchmaking never paired us with anybody, so this
+		// answers 0 - which would put the watcher back on a port that IS in the
+		// match, and Melee would read a neutral controller for a player who is
+		// actually being fed. That is the divergence the old build died of.
+		if (!isWatching())
+			localPlayerIndex = matchmaking->LocalPlayerIndex();
 
 		if (!slippi_netplay)
 		{
@@ -2261,7 +2416,7 @@ void CEXISlippi::prepareOnlineMatchState()
 			auto matchInfo = slippi_netplay->GetMatchInfo();
 			remotePlayersReady = 1;
 #ifndef LOCAL_TESTING
-			u8 remotePlayerCount = matchmaking->RemotePlayerCount();
+			u8 remotePlayerCount = isWatching() ? 2 : matchmaking->RemotePlayerCount();
 			for (int i = 0; i < remotePlayerCount; i++)
 			{
 				if (!matchInfo->remotePlayerSelections[i].isCharacterSelected)
@@ -2386,7 +2541,7 @@ void CEXISlippi::prepareOnlineMatchState()
 	if (localPlayerReady && remotePlayersReady)
 	{
 		auto isDecider = slippi_netplay->IsDecider();
-		u8 remotePlayerCount = matchmaking->RemotePlayerCount();
+		u8 remotePlayerCount = isWatching() ? 2 : matchmaking->RemotePlayerCount();
 		auto matchInfo = slippi_netplay->GetMatchInfo();
 		SlippiPlayerSelections lps = matchInfo->localPlayerSelections;
 		auto rps = matchInfo->remotePlayerSelections;

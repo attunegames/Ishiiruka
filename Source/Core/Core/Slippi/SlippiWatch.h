@@ -73,6 +73,24 @@ class SlippiWatchClient
 	};
 	Picks GetPicks() const;
 
+	// Enough to start a match: we know what both of them picked, and we hold at
+	// least the first frame of it.
+	bool Ready() const;
+
+	// ⚠ The watcher is port 2, not port 0.
+	//
+	// The old build stood in for port 0, which meant the two players arrived by
+	// DIFFERENT routes - one through Melee's local input path, which holds a pad
+	// back by the input delay, and one through the remote path, which does not.
+	// Uncompensated that simulates a match neither of them played, and the
+	// compensation is fiddly enough to be a bug of its own.
+	//
+	// Port 2 is not in the match - the block marks it empty - so both real
+	// players come through the remote path identically, and the 1P port that
+	// InitOnlinePlay reads points at a slot whose neutral controller moves
+	// nothing.
+	static const u8 WATCHER_PORT = 2;
+
   private:
 	void ThreadFunc();
 	void OnPacket(const u8 *data, size_t len, ENetPeer *from);
