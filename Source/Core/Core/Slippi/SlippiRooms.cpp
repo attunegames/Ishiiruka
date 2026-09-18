@@ -684,9 +684,20 @@ void SetQueued(bool queued)
 
 void ReportPick(int character, int color, int stage)
 {
-	s_pick_char.store(character);
-	s_pick_color.store(color);
-	s_pick_stage.store(stage);
+	// ⚠️ NOT_PICKED means "nothing to say about this one", NOT "clear it". The
+	// draft arrives a step at a time and each step knows only its own field, so
+	// storing the blanks would have every step wipe what the one before it
+	// published - the character would vanish the moment a stage was chosen.
+	//
+	// Clearing is deliberate and happens in two places only: ReportResult, when
+	// the game these picks belong to is over, and Enter, for a different room.
+	if (character != Draft::NOT_PICKED)
+	{
+		s_pick_char.store(character);
+		s_pick_color.store(color);
+	}
+	if (stage != Draft::NOT_PICKED)
+		s_pick_stage.store(stage);
 }
 
 void ReportResult(const std::string &match_id, bool i_won, int winner_stocks)

@@ -3881,6 +3881,30 @@ void CEXISlippi::handleGamePrepStepComplete(const SlippiExiTypes::GpCompleteStep
 	res.char_color_selection = query.char_color_selection;
 	memcpy(res.stage_selections, query.stage_selections, 2);
 
+	// ⚠️ A watcher has no business in somebody else's draft. It should never
+	// reach this screen - the room sends it straight to the splash - but its
+	// netplay client points at the two people it is watching, so if it ever did,
+	// this would inject a stranger's bans and picks into their set.
+	if (isWatching())
+		return;
+
+	// Tell the ROOM as well as the opponent. The two of them settle this between
+	// themselves over netplay, and nobody else in the room is in that
+	// conversation - so without this the band across the top of the room screen
+	// stays empty while two people it can name by name pick a stage.
+	{
+		const int chr =
+		    query.char_selection == 0xFF ? Rooms::Draft::NOT_PICKED : query.char_selection;
+		const int stage =
+		    query.stage_selections[0] == 0xFF ? Rooms::Draft::NOT_PICKED : query.stage_selections[0];
+
+		// ⚠️ stage_selections[0] is THIS step's stage - a ban on the ban step and
+		// the choice on the pick step - so the ban must not go out as the stage or
+		// the room draws the one stage they agreed not to play on.
+		Rooms::ReportPick(chr, query.char_color_selection,
+		                  query.step_idx == 0 ? Rooms::Draft::NOT_PICKED : stage);
+	}
+
 	if (slippi_netplay)
 		slippi_netplay->SendGamePrepStep(res);
 }
