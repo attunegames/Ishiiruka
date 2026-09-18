@@ -1604,6 +1604,21 @@ void SlippiNetplayClient::SetRemoteSelections(u8 remoteIdx, const SlippiPlayerSe
 	matchInfo.remotePlayerSelections[remoteIdx].playerIdx = keepIdx;
 }
 
+// What WE are, for a watcher. Local only - nothing is sent, because the two
+// people playing have no interest in a third set of selections and would file
+// them against a real port.
+//
+// ⚠️ Without this, matchInfo.localPlayerSelections stays default for the whole
+// watch, and two things downstream go wrong at once. Its playerIdx reads 0
+// instead of 2, so prepareOnlineMatchState files us over player 0 and leaves
+// orderedSelections[2] null - which it then dereferences. And its rngOffset
+// reads 0, so the match runs on seed 0 rather than the one the players used.
+void SlippiNetplayClient::SetWatchSelections(const SlippiPlayerSelections &s)
+{
+	matchInfo.localPlayerSelections = s;
+	matchInfo.localPlayerSelections.playerIdx = playerIdx;
+}
+
 void SlippiNetplayClient::SetMatchSelections(SlippiPlayerSelections &s)
 {
 	matchInfo.localPlayerSelections.Merge(s);

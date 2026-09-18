@@ -2336,6 +2336,13 @@ void CEXISlippi::prepareOnlineMatchState()
 		localSelections.stageId = picks.stage;
 		localSelections.rngOffset = picks.seed;
 
+		// ⚠️ And into the netplay client, which is where the code below actually
+		// reads them from - localSelections is ours, matchInfo.localPlayerSelections
+		// is what prepareOnlineMatchState uses. Leaving the two out of step read as
+		// player index 0 and seed 0, which crashed on a null orderedSelections[2]
+		// and would have run the match on the wrong seed if it had not.
+		slippi_netplay->SetWatchSelections(localSelections);
+
 		localPlayerIndex = SlippiWatchClient::WATCHER_PORT;
 		mmState = SlippiMatchmaking::ProcessState::CONNECTION_SUCCESS;
 	}
@@ -2760,7 +2767,12 @@ void CEXISlippi::prepareOnlineMatchState()
 		// sometimes
 
 		// Set p3/p4 player type to human or none depending on the amount of players
-		onlineMatchBlock[0x61 + 2 * 0x24] = remotePlayerCount >= 2 ? 0 : 3;
+		//
+		// ⚠️ A watcher has remotePlayerCount 2 - the two people playing - but it is
+		// not a third player, it is sitting on port 2 precisely because that port is
+		// NOT in the match. Left to the normal rule this marks port 2 human and puts
+		// a motionless fighter in the game.
+		onlineMatchBlock[0x61 + 2 * 0x24] = (remotePlayerCount >= 2 && !isWatching()) ? 0 : 3;
 		onlineMatchBlock[0x61 + 3 * 0x24] = remotePlayerCount >= 3 ? 0 : 3;
 
 		u16 *stage = (u16 *)&onlineMatchBlock[0xE];

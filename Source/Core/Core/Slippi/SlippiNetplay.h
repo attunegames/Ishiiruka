@@ -183,6 +183,7 @@ class SlippiNetplayClient
 	// playing. See SlippiWatchClient::WATCHER_PORT.
 	void MakeWatcher(u8 playerIdx);
 	void SetRemoteSelections(u8 remoteIdx, const SlippiPlayerSelections &s);
+	void SetWatchSelections(const SlippiPlayerSelections &s);
 	SlippiNetplayClient(std::vector<std::string> addrs, std::vector<u16> ports, const u8 remotePlayerCount,
 	                    const u16 localPort, bool isDecider, u8 playerIdx);
 	~SlippiNetplayClient();
