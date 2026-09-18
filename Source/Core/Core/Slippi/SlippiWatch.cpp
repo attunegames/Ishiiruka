@@ -130,6 +130,7 @@ void SlippiWatchClient::ThreadFunc()
 	Common::SetCurrentThreadName("Slippi watch");
 
 	size_t connected = 0;
+	u64 lastWaitLogUs = 0;
 
 	while (m_run.load(std::memory_order_acquire))
 	{
@@ -213,6 +214,31 @@ void SlippiWatchClient::ThreadFunc()
 				}
 			}
 			m_fallback.clear();
+		}
+
+		// Say something while nothing is happening.
+		//
+		// ⚠️ A watch that never connects used to be completely silent: the status
+		// stayed CONNECTING for ever, Melee stayed where it was, and from the
+		// outside pressing Y "did nothing". A watcher whose players are
+		// unreachable is a normal outcome - a restrictive NAT on either end does
+		// it - so it has to report itself rather than hang.
+		if (m_status.load(std::memory_order_acquire) == Status::CONNECTING)
+		{
+			const u64 waited = Common::Timer::GetTimeUs() - m_dialledAtUs;
+			if (waited > 20000000) // twenty seconds
+			{
+				ERROR_LOG(SLIPPI_ONLINE, "[Watch] gave up - reached %d of %d players in 20s", (int)connected,
+				          (int)m_needed);
+				m_status.store(Status::FAILED, std::memory_order_release);
+				return;
+			}
+			if (waited - lastWaitLogUs > 5000000) // every five seconds
+			{
+				lastWaitLogUs = waited;
+				WARN_LOG(SLIPPI_ONLINE, "[Watch] still waiting - %d of %d answered after %ds", (int)connected,
+				         (int)m_needed, (int)(waited / 1000000));
+			}
 		}
 
 		// Nothing to ask for until we are actually behind.

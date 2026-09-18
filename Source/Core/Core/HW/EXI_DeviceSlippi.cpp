@@ -3086,8 +3086,20 @@ void CEXISlippi::handleRoomWatch()
 {
 	if (watch_client)
 	{
-		WARN_LOG(SLIPPI_ONLINE, "[Rooms] already watching");
-		return;
+		// ⚠️ A client that gave up has to be let go of, or Y is dead for the rest
+		// of the session: the object is still here, so every later press answers
+		// "already watching" and the person can never try again.
+		SlippiWatchClient::Status st = watch_client->GetStatus();
+		if (st == SlippiWatchClient::Status::FAILED || st == SlippiWatchClient::Status::OVER)
+		{
+			WARN_LOG(SLIPPI_ONLINE, "[Rooms] the last watch ended - starting a new one");
+			watch_client.reset();
+		}
+		else
+		{
+			WARN_LOG(SLIPPI_ONLINE, "[Rooms] already watching");
+			return;
+		}
 	}
 
 	Rooms::State rs = Rooms::Latest();
