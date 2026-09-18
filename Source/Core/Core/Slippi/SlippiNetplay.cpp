@@ -1324,9 +1324,9 @@ void SlippiNetplayClient::ThreadFunc()
 					// game is under way - see m_watchSelections. Chosen by
 					// isCharacterSelected rather than by a "game running" flag,
 					// because that is precisely the question being asked.
-					const SlippiPlayerSelections &tell = matchInfo.localPlayerSelections.isCharacterSelected
-					                                         ? matchInfo.localPlayerSelections
-					                                         : m_watchSelections;
+					SlippiPlayerSelections &tell = matchInfo.localPlayerSelections.isCharacterSelected
+					                                   ? matchInfo.localPlayerSelections
+					                                   : m_watchSelections;
 					sf::Packet sel;
 					writeToPacket(sel, tell);
 					ENetPacket *epac = enet_packet_create(sel.getData(), sel.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
