@@ -191,6 +191,23 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet &packet, ENetPeer *peer)
 
 	switch (mid)
 	{
+	case NP_MSG_SLIPPI_WATCH_FROM:
+	{
+		// The only thing a watcher ever sends. Answered only for a peer already
+		// known to be watching, so it cannot be used to make a player's client
+		// dig up and resend a whole match to a stranger.
+		if (std::find(m_spectators.begin(), m_spectators.end(), peer) == m_spectators.end())
+			break;
+
+		s32 from;
+		if (!(packet >> from))
+		{
+			ERROR_LOG(SLIPPI_ONLINE, "[Netplay] watch request with no frame in it");
+			break;
+		}
+		SendWatchHistoryFrom(peer, from);
+		break;
+	}
 	case NP_MSG_SLIPPI_PAD:
 	{
 		// Fetch current time immediately for the most accurate timing calculations
@@ -704,6 +721,52 @@ void SlippiNetplayClient::Send(sf::Packet &packet)
 	SendToSpectators(packet);
 }
 
+// Everything a watcher has missed, in chunks, in the SAME shape as a live pad
+// packet so the watcher needs only one parser.
+//
+// ⚠ Two things the reader dictates and neither is negotiable. The frame in the
+// header is the NEWEST in the packet and the pads run backwards from it - see
+// the loop in OnData that reads index i as frame-i. And it works out how many
+// frames a packet holds by subtracting what it already has from that header
+// frame, then REFUSES anything over 128. So chunks have to be small and they
+// have to arrive in order, which is why they go reliable rather than on the
+// unsequenced channel the live stream uses.
+void SlippiNetplayClient::SendWatchHistoryFrom(ENetPeer *peer, s32 fromFrame)
+{
+	if (!peer || m_watchHistory.empty())
+		return;
+
+	const s32 first = m_watchHistoryFirstFrame;
+	const s32 last = first + (s32)m_watchHistory.size() - 1;
+	if (fromFrame < first)
+		fromFrame = first;
+	if (fromFrame > last)
+		return; // Already up with us.
+
+	// Two seconds a packet, and under the reader's limit of 128 with room to
+	// spare. A whole match is a hundred or so of these.
+	const s32 kPerChunk = 120;
+	for (s32 f = fromFrame; f <= last; f += kPerChunk)
+	{
+		const s32 count = std::min(kPerChunk, last - f + 1);
+		const s32 newest = f + count - 1;
+
+		sf::Packet pac;
+		pac << static_cast<MessageId>(NP_MSG_SLIPPI_PAD);
+		pac << newest;
+		pac << this->playerIdx;
+		pac << (s32)0; // checksumFrame - a frame sent again vouches for nothing
+		pac << (u32)0; // checksum
+		for (s32 i = 0; i < count; i++)
+			pac.append(m_watchHistory[newest - first - i].data(), SLIPPI_PAD_DATA_SIZE);
+
+		ENetPacket *epac = enet_packet_create(pac.getData(), pac.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
+		enet_peer_send(peer, 0, epac);
+	}
+
+	WARN_LOG(SLIPPI_ONLINE, "[Netplay] caught a watcher up, frames %d to %d", fromFrame, last);
+}
+
 // The same packet again, to anyone watching.
 //
 // ⚠ Only the ones that describe the match, and never an ack. A watcher sends
@@ -895,7 +958,18 @@ void SlippiNetplayClient::ThreadFunc()
 				if (netEvent.data == SLIPPI_CONNECT_SPECTATOR)
 				{
 					if (std::find(m_spectators.begin(), m_spectators.end(), netEvent.peer) == m_spectators.end())
+					{
+						if (m_spectators.size() >= MAX_SPECTATORS)
+						{
+							// Turned away here rather than anywhere else: this is
+							// the last point before they cost a player anything.
+							WARN_LOG(SLIPPI_ONLINE, "[Netplay] turning a watcher away, %d already",
+							         (int)m_spectators.size());
+							enet_peer_disconnect(netEvent.peer, 0);
+							break; // Breaks out of case
+						}
 						m_spectators.push_back(netEvent.peer);
+					}
 					WARN_LOG(SLIPPI_ONLINE, "[Netplay] someone is watching from %x:%d (%d now)",
 					         netEvent.peer->address.host, netEvent.peer->address.port, (int)m_spectators.size());
 
@@ -1227,7 +1301,18 @@ void SlippiNetplayClient::ThreadFunc()
 				if (netEvent.peer && netEvent.data == SLIPPI_CONNECT_SPECTATOR)
 				{
 					if (std::find(m_spectators.begin(), m_spectators.end(), netEvent.peer) == m_spectators.end())
+					{
+						if (m_spectators.size() >= MAX_SPECTATORS)
+						{
+							// Turned away here rather than anywhere else: this is
+							// the last point before they cost a player anything.
+							WARN_LOG(SLIPPI_ONLINE, "[Netplay] turning a watcher away, %d already",
+							         (int)m_spectators.size());
+							enet_peer_disconnect(netEvent.peer, 0);
+							break; // Breaks out of case
+						}
 						m_spectators.push_back(netEvent.peer);
+					}
 					WARN_LOG(SLIPPI_ONLINE, "[Netplay] someone is watching from %x:%d (%d now)",
 					         netEvent.peer->address.host, netEvent.peer->address.port, (int)m_spectators.size());
 
@@ -1307,6 +1392,12 @@ std::vector<int> SlippiNetplayClient::GetFailedConnections()
 
 void SlippiNetplayClient::StartSlippiGame()
 {
+	// A new game means new frame numbers, counting from the start again. The
+	// watcher history is addressed by offset from its first frame, so carrying
+	// the last game's into this one would have every lookup land somewhere else.
+	m_watchHistory.clear();
+	m_watchHistoryFirstFrame = 0;
+
 	// Reset variables to start a new game
 	hasGameStarted = false;
 
@@ -1401,6 +1492,32 @@ void SlippiNetplayClient::SendSlippiPad(std::unique_ptr<SlippiPad> pad)
 	}
 
 	auto frame = localPadQueue.front()->frame;
+
+	// Keep every frame for watchers before the queue is trimmed out from under
+	// them. localPadQueue only holds what the other player has not acked yet.
+	//
+	// front() is the NEWEST frame, so this walks backwards to append in frame
+	// order, and only the frames we have not already stored.
+	{
+		s32 newest = localPadQueue.front()->frame;
+		if (m_watchHistory.empty())
+			m_watchHistoryFirstFrame = localPadQueue.back()->frame;
+
+		s32 haveTo = m_watchHistoryFirstFrame + (s32)m_watchHistory.size() - 1;
+		for (auto it = localPadQueue.rbegin(); it != localPadQueue.rend(); ++it)
+		{
+			if (!m_watchHistory.empty() && (*it)->frame <= haveTo)
+				continue;
+			// A hole would make every later frame land on the wrong index, and
+			// the whole buffer is read by offset. Better to stop than to lie.
+			if ((*it)->frame != m_watchHistoryFirstFrame + (s32)m_watchHistory.size())
+				break;
+			std::array<u8, SLIPPI_PAD_DATA_SIZE> one{};
+			memcpy(one.data(), (*it)->padBuf, SLIPPI_PAD_DATA_SIZE);
+			m_watchHistory.push_back(one);
+		}
+		(void)newest;
+	}
 
 	auto spac = std::make_unique<sf::Packet>();
 	*spac << static_cast<MessageId>(NP_MSG_SLIPPI_PAD);

@@ -65,6 +65,16 @@ enum
 	NP_MSG_SLIPPI_COMPLETE_STEP = 0x85,
 	NP_MSG_SLIPPI_SYNCED_STATE = 0x86,
 
+	// A watcher saying how far it has got: "I hold every frame up to N, send me
+	// what comes after". One message covers both the catch-up when it first
+	// connects (N = 0) and recovery from a dropped burst of pads, because they
+	// are the same question - the pad stream is unreliable and carries only a
+	// few frames of history, so anything older is gone unless it is asked for.
+	//
+	// The only thing a watcher ever sends. It is NOT an ack: nothing waits on
+	// it, and it has no part in trimming anyone's pad queue.
+	NP_MSG_SLIPPI_WATCH_FROM = 0x87,
+
 	NP_MSG_START_GAME = 0xA0,
 	NP_MSG_CHANGE_GAME = 0xA1,
 	NP_MSG_STOP_GAME = 0xA2,

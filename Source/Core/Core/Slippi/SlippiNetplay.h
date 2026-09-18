@@ -257,6 +257,25 @@ class SlippiNetplayClient
 	// ⚠ Owned by the network thread, like m_server and activeConnections.
 	std::vector<ENetPeer *> m_spectators;
 
+	// ⚠ Six. Every watcher is another small UDP send per frame from a machine
+	// that is mid-match, and the ENet host is built with ten peer slots of which
+	// the players hold some - a room can hold far more people than that, so
+	// without a ceiling a full room piles onto two of them.
+	static const size_t MAX_SPECTATORS = 6;
+
+	// Our own pads, kept for the whole match, for watchers only.
+	//
+	// ⚠ Nothing else keeps them. localPadQueue is trimmed the moment the other
+	// player acks, and the pad stream is unreliable and carries only the few
+	// un-acked frames as redundancy - so a watcher that loses a burst longer
+	// than that has lost those frames for good unless somebody kept them. This
+	// is that somebody. A whole match is about 15k frames of 8 bytes, so the
+	// cost of never trimming it is well under a megabyte.
+	std::vector<std::array<u8, SLIPPI_PAD_DATA_SIZE>> m_watchHistory;
+	s32 m_watchHistoryFirstFrame = 0;
+
+	void SendWatchHistoryFrom(ENetPeer *peer, s32 fromFrame);
+
 	std::thread m_thread;
 	u8 m_remotePlayerCount = 0;
 
