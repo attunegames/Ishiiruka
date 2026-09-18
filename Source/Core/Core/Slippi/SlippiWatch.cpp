@@ -340,8 +340,38 @@ void SlippiWatchClient::OnPacket(const u8 *data, size_t len, ENetPeer *from)
 // ⚠️ Called with m_lock held.
 void SlippiWatchClient::Advance()
 {
-	s32 at = m_contiguous.load(std::memory_order_relaxed);
 	const s32 ceiling = std::min(m_heard[0], m_heard[1]);
+
+	// ⚠ Where the timeline STARTS is found, not assumed.
+	//
+	// It began at Slippi::GAME_FIRST_FRAME - 1, which says the first frame we
+	// want is -123. If the players' history does not reach back that far - they
+	// only keep what they have sent, and a match already under way has been
+	// trimmed - then the very first check fails and this never advances a single
+	// frame. Silently, and for the rest of the match.
+	//
+	// So the first time both of them have said anything, walk forward to the
+	// earliest frame they BOTH hold and start from there.
+	if (!m_baselined && m_heard[0] > Slippi::GAME_FIRST_FRAME - 1 && m_heard[1] > Slippi::GAME_FIRST_FRAME - 1)
+	{
+		for (s32 f = Slippi::GAME_FIRST_FRAME; f <= ceiling; f++)
+		{
+			size_t slot = SlotFor(f);
+			if (slot >= m_line[0].size())
+				break;
+			if (m_line[0][slot].have && m_line[1][slot].have)
+			{
+				m_contiguous.store(f - 1, std::memory_order_release);
+				m_baselined = true;
+				WARN_LOG(SLIPPI_ONLINE, "[Watch] the timeline starts at frame %d", f);
+				break;
+			}
+		}
+		if (!m_baselined)
+			return; // nothing either of them holds in common yet
+	}
+
+	s32 at = m_contiguous.load(std::memory_order_relaxed);
 
 	while (at < ceiling)
 	{
@@ -373,7 +403,10 @@ bool SlippiWatchClient::GetPad(s32 frame, u8 playerIdx, u8 *out) const
 bool SlippiWatchClient::Ready() const
 {
 	std::lock_guard<std::mutex> lk(m_lock);
-	return m_picks.known && m_contiguous.load(std::memory_order_acquire) >= Slippi::GAME_FIRST_FRAME;
+	// Baselined means we have found where the timeline starts and hold at least
+	// one frame of it from both of them. Comparing against GAME_FIRST_FRAME
+	// instead would never come true for a match already under way.
+	return m_picks.known && m_baselined;
 }
 
 SlippiWatchClient::Picks SlippiWatchClient::GetPicks() const

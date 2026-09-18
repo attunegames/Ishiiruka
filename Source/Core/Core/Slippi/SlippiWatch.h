@@ -115,6 +115,7 @@ class SlippiWatchClient
 	mutable std::mutex m_lock;
 	std::vector<Frame> m_line[2];
 	std::atomic<s32> m_contiguous{0};
+	bool m_baselined = false; // have we found where the timeline starts
 	s32 m_heard[2] = {0, 0}; // newest frame seen from each, holes and all
 	Picks m_picks;
 	bool m_toldPicks[2] = {false, false};
