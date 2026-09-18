@@ -69,6 +69,13 @@
 // cause.
 #define ROOM_FLAG_INROOM 0x10
 
+// A watch is up and we have enough of the match to describe it.
+//
+// ⚠ Not "a watch was asked for". The room screen hands Melee over on this, and
+// arriving before both players have said what they picked means a match with no
+// characters, no stage and no seed.
+#define ROOM_FLAG_WATCHING 0x20
+
 // 0xFF rather than 0 for "not picked": 0 is Captain Falcon and a real stage.
 #define ROOM_NOT_PICKED 0xFF
 

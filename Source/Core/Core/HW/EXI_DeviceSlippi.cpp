@@ -3234,6 +3234,8 @@ void CEXISlippi::prepareRoomState()
 	// search racing the last one's cleanup for it.
 	if (s.ready && !RoomsCleanupBusy())
 		flags |= ROOM_FLAG_READY;
+	if (isWatching())
+		flags |= ROOM_FLAG_WATCHING;
 
 	// ⚠️ And only when it is OUR match. A connection being up does not say
 	// whose: a third person walking into the queue while two others are being
