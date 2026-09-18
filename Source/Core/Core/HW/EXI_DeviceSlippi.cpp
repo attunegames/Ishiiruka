@@ -2405,7 +2405,11 @@ void CEXISlippi::prepareOnlineMatchState()
 		// If any players are disconnected and the match state is being requested (we are in a lobby),
 		// we should just disconnect. This allows for games to finish with a disconnected player but
 		// after that the "lobby" is terminated.
-		if (slippi_netplay->GetActivePlayerIndices().size() != matchmaking->RemotePlayerCount())
+		//
+		// ⚠ Meaningless for a watcher, and only passes by accident: its stand-in
+		// has no peers and matchmaking never paired it, so both sides are zero.
+		// Said out loud rather than relied on.
+		if (!isWatching() && slippi_netplay->GetActivePlayerIndices().size() != matchmaking->RemotePlayerCount())
 		{
 			isConnected = false;
 		}
@@ -2444,7 +2448,11 @@ void CEXISlippi::prepareOnlineMatchState()
 		}
 
 		// Here we are connected, check to see if we should init play session
-		if (!isPlaySessionActive)
+		//
+		// ⚠ Not for a watcher. This opens a reporting session with Slippi for a
+		// game this client is not playing, and the report that would close it is
+		// deliberately never sent.
+		if (!isPlaySessionActive && !isWatching())
 		{
 			slprs_exi_device_start_new_reporter_session(slprs_exi_device_ptr);
 			isPlaySessionActive = true;
@@ -3589,6 +3597,13 @@ void CEXISlippi::handleConnectionCleanup()
 
 	// Reset any selection overwrites
 	overwrite_selections.clear();
+
+	// A watch belongs to the match that is being cleaned up.
+	if (watch_client)
+	{
+		setCatchUpSpeed(false);
+		watch_client.reset();
+	}
 
 	// Reset play session
 	isPlaySessionActive = false;
