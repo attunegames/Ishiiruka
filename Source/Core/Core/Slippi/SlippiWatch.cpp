@@ -27,8 +27,12 @@ const size_t kFramesReserved = 60 * 60 * 12; // twelve minutes
 } // namespace
 
 SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, const std::vector<u16> &ports,
-                                     u16 localPort)
+                                     u16 localPort,
+                                     const std::vector<std::pair<std::string, u16>> &fallback)
 {
+	m_fallback = fallback;
+	m_needed = std::min<size_t>(addrs.size(), 2);
+
 	for (int i = 0; i < 2; i++)
 		m_line[i].resize(kFramesReserved);
 	m_contiguous.store(Slippi::GAME_FIRST_FRAME - 1, std::memory_order_release);
@@ -85,6 +89,7 @@ SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, cons
 		return;
 	}
 
+	m_dialledAtUs = Common::Timer::GetTimeUs();
 	m_thread = std::thread(&SlippiWatchClient::ThreadFunc, this);
 }
 
@@ -155,7 +160,10 @@ void SlippiWatchClient::ThreadFunc()
 				ENetPacket *epac = enet_packet_create(ask.getData(), ask.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
 				enet_peer_send(ev.peer, 0, epac);
 
-				if (connected >= m_players.size())
+				// ⚠ m_needed, not m_players.size(): the test fallback adds more
+				// peers aimed at the same two people, and waiting for all of them
+				// would mean waiting for a duplicate of a connection we have.
+				if (connected >= m_needed)
 					m_status.store(Status::WATCHING, std::memory_order_release);
 				break;
 			}
@@ -175,6 +183,36 @@ void SlippiWatchClient::ThreadFunc()
 			default:
 				break;
 			}
+		}
+
+		// ⚠⚠ TEST RIGS ONLY - DELETE BEFORE THE FIRST BETA ⚠⚠
+		//
+		// The real address has had its chance and nobody answered. On a rig where
+		// every client is behind one router that is the expected outcome: the
+		// players' public address is OUR public address, and a packet sent to it
+		// is a hairpin that most routers drop.
+		//
+		// Tried SECOND, never first, so a watcher out on the internet reaches the
+		// real address and never spends a moment on this. And the addresses only
+		// exist at all when the players' build had lanForTesting on.
+		if (!m_fallback.empty() && connected < m_needed &&
+		    Common::Timer::GetTimeUs() - m_dialledAtUs > 3000000)
+		{
+			for (const auto &f : m_fallback)
+			{
+				ENetAddress addr;
+				if (enet_address_set_host(&addr, f.first.c_str()) != 0)
+					continue;
+				addr.port = f.second;
+				ENetPeer *peer = enet_host_connect(m_host, &addr, 3, SLIPPI_CONNECT_SPECTATOR);
+				if (peer)
+				{
+					m_players.push_back(peer);
+					WARN_LOG(SLIPPI_ONLINE, "[Watch] ⚠ nobody answered - trying the test address %s:%d",
+					         f.first.c_str(), f.second);
+				}
+			}
+			m_fallback.clear();
 		}
 
 		// Nothing to ask for until we are actually behind.

@@ -37,7 +37,9 @@ class SlippiWatchClient
 	//
 	// One socket for both of them on purpose: it is one hole through this end's
 	// NAT, one address to publish, and one thing for both players to punch at.
-	SlippiWatchClient(const std::vector<std::string> &addrs, const std::vector<u16> &ports, u16 localPort);
+	// `fallback` is TEST ONLY and may be empty - see m_fallback.
+	SlippiWatchClient(const std::vector<std::string> &addrs, const std::vector<u16> &ports, u16 localPort,
+	                  const std::vector<std::pair<std::string, u16>> &fallback = {});
 	~SlippiWatchClient();
 
 	SlippiWatchClient(const SlippiWatchClient &) = delete;
@@ -99,6 +101,19 @@ class SlippiWatchClient
 
 	ENetHost *m_host = nullptr;
 	std::vector<ENetPeer *> m_players;
+
+	// How many of them there are, which is NOT m_players.size() once the test
+	// fallback has added more peers pointing at the same two people.
+	size_t m_needed = 0;
+
+	// ⚠⚠ TEST RIGS ONLY - DELETE BEFORE THE FIRST BETA ⚠⚠
+	//
+	// The players' addresses on their own network, dialled only if the real ones
+	// have gone unanswered for a few seconds. Three clients behind one router
+	// cannot reach each other any other way, and a watcher on the internet never
+	// gets here because the real address answers.
+	std::vector<std::pair<std::string, u16>> m_fallback;
+	u64 m_dialledAtUs = 0;
 	std::thread m_thread;
 	std::atomic<bool> m_run{true};
 	std::atomic<Status> m_status{Status::CONNECTING};

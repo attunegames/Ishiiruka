@@ -108,6 +108,13 @@ bool LoadConfig()
 		s_config.name = j.value("displayName", "");
 		s_config.connect_code = j.value("connectCode", "");
 		s_config.refresh_token = j.value("refreshToken", "");
+		// ⚠ TEST RIGS ONLY. See Rooms::LanForTesting().
+		s_config.lan_for_testing = j.value("lanForTesting", false);
+		if (s_config.lan_for_testing)
+		{
+			WARN_LOG(SLIPPI_ONLINE, "[Rooms] ⚠ lanForTesting is ON - this build publishes a LAN address. "
+			                        "It must be off for anything that reaches real players.");
+		}
 	}
 	catch (const std::exception &e)
 	{
@@ -645,8 +652,24 @@ void AbandonEnter()
 	s_entering.store(false);
 }
 
-void SetAddress(const std::string &addr)
+bool LanForTesting()
 {
+	return s_config.lan_for_testing;
+}
+
+void SetAddress(const std::string &external, const std::string &lan)
+{
+	std::string addr = external;
+
+	// ⚠⚠ TEST RIGS ONLY - DELETE BEFORE THE FIRST BETA ⚠⚠
+	//
+	// Rides along in the same field after a space, so no column and no migration
+	// exists to be forgotten later. A reader that does not know about it sees
+	// the real address followed by something it can ignore, and with the flag
+	// off nothing is appended at all.
+	if (s_config.lan_for_testing && !lan.empty())
+		addr += " " + lan;
+
 	std::lock_guard<std::mutex> lock(s_state_lock);
 	if (s_address == addr)
 		return;

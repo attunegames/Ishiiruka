@@ -2374,7 +2374,9 @@ void CEXISlippi::prepareOnlineMatchState()
 			// Rooms: tell the room where watchers should dial. This is Slippi's
 			// own measurement of the socket this match is running on, so there
 			// is nothing for us to discover and no STUN to do.
-			Rooms::SetAddress(matchmaking->LocalExternalAddress());
+			// ⚠ The second argument is TEST ONLY and is dropped unless peppy.json
+			// says lanForTesting. See Rooms::Config::lan_for_testing.
+			Rooms::SetAddress(matchmaking->LocalExternalAddress(), matchmaking->LocalLanAddress());
 
 			// Use allowed stages from the matchmaking service and pick a new random stage before sending
 			// the selections to the opponent
@@ -3096,18 +3098,44 @@ void CEXISlippi::handleRoomWatch()
 		return;
 	}
 
+	// Each target is "host:port", and on a TEST RIG a second "host:port" after a
+	// space - where that player is on their own network. See
+	// Rooms::Config::lan_for_testing.
+	auto split = [](const std::string &one, std::string &host, u16 &port) -> bool {
+		size_t colon = one.rfind(':');
+		if (colon == std::string::npos)
+			return false;
+		host = one.substr(0, colon);
+		port = (u16)atoi(one.substr(colon + 1).c_str());
+		return port != 0;
+	};
+
 	std::vector<std::string> addrs;
 	std::vector<u16> ports;
+	std::vector<std::pair<std::string, u16>> fallback;
 	for (const auto &target : rs.watch_targets)
 	{
-		size_t colon = target.rfind(':');
-		if (colon == std::string::npos)
+		std::string real = target, test;
+		size_t space = target.find(' ');
+		if (space != std::string::npos)
 		{
-			ERROR_LOG(SLIPPI_ONLINE, "[Rooms] '%s' is not host:port", target.c_str());
+			real = target.substr(0, space);
+			test = target.substr(space + 1);
+		}
+
+		std::string host;
+		u16 port = 0;
+		if (!split(real, host, port))
+		{
+			ERROR_LOG(SLIPPI_ONLINE, "[Rooms] '%s' is not host:port", real.c_str());
 			return;
 		}
-		addrs.push_back(target.substr(0, colon));
-		ports.push_back((u16)atoi(target.substr(colon + 1).c_str()));
+		addrs.push_back(host);
+		ports.push_back(port);
+
+		// ⚠⚠ TEST RIGS ONLY - DELETE BEFORE THE FIRST BETA ⚠⚠
+		if (!test.empty() && split(test, host, port))
+			fallback.emplace_back(host, port);
 	}
 
 	// Port 0: the OS picks one. A watcher dials out, so its own NAT opens on the
@@ -3115,7 +3143,7 @@ void CEXISlippi::handleRoomWatch()
 	// is nothing yet that needs this port to be predictable. That changes only
 	// if the punch list is ever wired up, for players whose router will not take
 	// a first packet from a stranger.
-	watch_client = std::make_unique<SlippiWatchClient>(addrs, ports, 0);
+	watch_client = std::make_unique<SlippiWatchClient>(addrs, ports, 0, fallback);
 	WARN_LOG(SLIPPI_ONLINE, "[Rooms] watching %s and %s", rs.watch_targets[0].c_str(),
 	         rs.watch_targets[1].c_str());
 }

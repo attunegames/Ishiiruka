@@ -34,6 +34,20 @@ struct Config
 	std::string name;          // displayName: Alpha, Bravo, Charlie
 	std::string connect_code;  // connectCode: ALPH#694
 	std::string refresh_token; // refreshToken: ours, written back after a sign-in
+
+	// ⚠⚠ TEST RIGS ONLY - lanForTesting - DELETE BEFORE THE FIRST BETA ⚠⚠
+	//
+	// Three clients behind ONE router cannot reach each other by their shared
+	// public address: that is a hairpin and most routers drop it. Slippi has the
+	// same problem for the match itself and solves it by sending ipAddressLan
+	// and using it when both externals agree - this is the same thing for the
+	// watch connection, which Slippi knows nothing about.
+	//
+	// Off by default, and the LAN address is only ever dialled AFTER the real
+	// one has failed, so a build with this off behaves exactly as if the code
+	// were not here. Everything it touches is marked with this same banner.
+	bool lan_for_testing = false;
+
 	bool loaded = false;
 };
 
@@ -162,7 +176,13 @@ bool InRoom();
 
 // Where Slippi says we can be reached, for watchers to dial. Reported on the
 // next tick, like everything else here. Empty clears it.
-void SetAddress(const std::string &addr);
+//
+// `lan` is TEST ONLY and is published only when peppy.json says lanForTesting -
+// see Config::lan_for_testing. It rides along in the same field, after a space.
+void SetAddress(const std::string &external, const std::string &lan);
+
+// ⚠⚠ TEST RIGS ONLY - DELETE BEFORE THE FIRST BETA ⚠⚠
+bool LanForTesting();
 
 // On our way into a room whose code we do not have yet.
 //

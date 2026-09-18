@@ -96,6 +96,15 @@ class SlippiMatchmaking
 	//
 	// Empty until a match has been arranged.
 	const std::string &LocalExternalAddress() { return m_localExternalAddr; }
+
+	// ⚠ TEST RIG ONLY. Where we are on our own network, which is the only way
+	// three clients behind ONE router can reach each other - a packet sent to
+	// our own public address is a hairpin, and most routers drop it.
+	//
+	// Published only when peppy.json says lanForTesting, and dialled only after
+	// the real address has already failed. To be deleted before the first build
+	// that goes to other players.
+	const std::string &LocalLanAddress() { return m_localLanAddr; }
 	std::vector<SlippiUser::UserInfo> GetPlayerInfo();
 	std::string GetPlayerName(u8 port);
 	SlippiRank GetPlayerRank(u8 port);
@@ -132,6 +141,7 @@ class SlippiMatchmaking
 
 	int m_hostPort;
 	std::string m_localExternalAddr;
+	std::string m_localLanAddr;
 	int m_localPlayerIndex;
 	std::vector<std::string> m_remoteIps;
 	MatchmakeResult m_mmResult;

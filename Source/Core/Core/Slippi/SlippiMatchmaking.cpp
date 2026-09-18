@@ -436,6 +436,11 @@ void SlippiMatchmaking::startMatchmaking()
 	}
 	WARN_LOG(SLIPPI_ONLINE, "[Matchmaking] Sending LAN address: %s", lanAddr);
 
+	// ⚠ TEST RIG ONLY - see Rooms::LanForTesting(). Kept here because this is
+	// where Slippi works the address out, and it is the same socket a watcher
+	// dials. Nothing publishes it unless peppy.json asks.
+	m_localLanAddr = lanAddr;
+
 	std::vector<u8> connectCodeBuf;
 	connectCodeBuf.insert(connectCodeBuf.end(), m_searchSettings.connectCode.begin(),
 	                      m_searchSettings.connectCode.end());
