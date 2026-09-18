@@ -2909,6 +2909,54 @@ void CEXISlippi::tellRoomsWhoWeAre()
 	Rooms::SetIdentity(info.displayName, info.connectCode);
 }
 
+// Rooms: watch the match this room is playing.
+//
+// Both addresses come from the room state we already hold - the two playing
+// publish where Slippi's matchmaking server saw their netplay socket, and a
+// watcher attaches to that same socket as an extra ENet peer.
+//
+// ⚠ BOTH of them. Each client sends only its OWN pads and its OWN selections,
+// so one connection is half a match and half a match cannot be simulated.
+void CEXISlippi::handleRoomWatch()
+{
+	if (watch_client)
+	{
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] already watching");
+		return;
+	}
+
+	Rooms::State rs = Rooms::Latest();
+	if (rs.watch_targets.size() < 2)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] cannot watch - %d of 2 players have said where they are",
+		          (int)rs.watch_targets.size());
+		return;
+	}
+
+	std::vector<std::string> addrs;
+	std::vector<u16> ports;
+	for (const auto &target : rs.watch_targets)
+	{
+		size_t colon = target.rfind(':');
+		if (colon == std::string::npos)
+		{
+			ERROR_LOG(SLIPPI_ONLINE, "[Rooms] '%s' is not host:port", target.c_str());
+			return;
+		}
+		addrs.push_back(target.substr(0, colon));
+		ports.push_back((u16)atoi(target.substr(colon + 1).c_str()));
+	}
+
+	// Port 0: the OS picks one. A watcher dials out, so its own NAT opens on the
+	// way and the players learn where it is from the connection itself - there
+	// is nothing yet that needs this port to be predictable. That changes only
+	// if the punch list is ever wired up, for players whose router will not take
+	// a first packet from a stranger.
+	watch_client = std::make_unique<SlippiWatchClient>(addrs, ports, 0);
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] watching %s and %s", rs.watch_targets[0].c_str(),
+	         rs.watch_targets[1].c_str());
+}
+
 void CEXISlippi::handleRoomJoin(u8 *payload)
 {
 	tellRoomsWhoWeAre();
@@ -3839,6 +3887,9 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_ROOM_LIST:
 			handleRoomList(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_WATCH:
+			handleRoomWatch();
 			break;
 		case CMD_ROOM_LIST_READ:
 			prepareRoomList();

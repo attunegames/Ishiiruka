@@ -10,6 +10,7 @@
 #include "Common/FileUtil.h"
 #include "Core/HW/EXI_Device.h"
 #include "Core/Slippi/SlippiDirectCodes.h"
+#include "Core/Slippi/SlippiWatch.h"
 #include "Core/Slippi/SlippiExiTypes.h"
 #include "Core/Slippi/SlippiGameFileLoader.h"
 #include "Core/Slippi/SlippiMatchmaking.h"
@@ -172,6 +173,9 @@ class CEXISlippi : public IEXIDevice
 		CMD_ROOM_STATE = 0xC9,  // read back: everything the room screen draws
 		CMD_ROOM_LIST = 0xC7,   // go and fetch the public rooms
 		CMD_ROOM_LIST_READ = 0xCA, // read back what the fetch found
+		// Watch the match the room is playing. No payload - Dolphin already
+		// holds the room state, and with it both players' addresses.
+		CMD_ROOM_WATCH = 0xCB,
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -269,6 +273,7 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_ROOM_STATE, 0x0},        // asks for the reply, sends nothing
 	    {CMD_ROOM_LIST, 0x1},         // one byte: which mode, 0xFF for any
 	    {CMD_ROOM_LIST_READ, 0x0},
+	    {CMD_ROOM_WATCH, 0x0},
 
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
@@ -369,6 +374,10 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomCreate(u8 *payload);
 	void handleRoomQueue(u8 *payload);
 	void handleRoomJoin(u8 *payload);
+	void handleRoomWatch();
+
+	// Watching a match in this room. Null unless we are.
+	std::unique_ptr<SlippiWatchClient> watch_client;
 	void tellRoomsWhoWeAre();
 	void prepareRoomState();
 	void handleRoomList(u8 *payload);
