@@ -388,8 +388,17 @@ class CEXISlippi : public IEXIDevice
 	// it took before.
 	bool isWatching() const
 	{
-		return watch_client && watch_client->GetStatus() == SlippiWatchClient::Status::WATCHING &&
-		       watch_client->Ready();
+		if (!watch_client || !watch_client->Ready())
+			return false;
+		// ⚠ OVER counts. The players disconnect the moment THEIR game ends, and
+		// a watcher that is behind still has a match to finish playing out of
+		// the timeline it already holds. Dropping it here would cut the ending
+		// off, which is the part worth watching.
+		//
+		// What ends a watched game is the game ending - Melee works that out
+		// from the state it has simulated, exactly as it does for a player.
+		SlippiWatchClient::Status st = watch_client->GetStatus();
+		return st == SlippiWatchClient::Status::WATCHING || st == SlippiWatchClient::Status::OVER;
 	}
 
 	// Watching a match in this room. Null unless we are.

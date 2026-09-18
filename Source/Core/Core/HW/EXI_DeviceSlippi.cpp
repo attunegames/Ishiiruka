@@ -3642,6 +3642,22 @@ void CEXISlippi::handleReportGame(const SlippiExiTypes::ReportGameQuery &query)
 	// starts a match from a result it still had lying around, and the handler
 	// that would have sent you to the room never gets a turn. The clearing is
 	// deferred instead - see s_rooms_end_session.
+	// ⚠ NOT a watcher. Melee ends a watched game the same way it ends a played
+	// one, so without this a watcher reports the result of a match it was not in
+	// - closing somebody else's pairing, moving a loser who did not lose, and
+	// reshuffling the queue on behalf of two people who are still playing.
+	//
+	// It tears its watch down instead, which is its whole end-of-match.
+	if (isWatching())
+	{
+		WARN_LOG(SLIPPI_ONLINE, "[Watch] the match ended - closing the watch");
+		setCatchUpSpeed(false);
+		watch_client.reset();
+		s_rooms_end_session = true;
+		s_rooms_end_session_at = Common::Timer::GetTimeMs();
+		return;
+	}
+
 	Rooms::State rs = Rooms::Latest();
 	if (matchmaking && !rs.match_id.empty())
 	{
