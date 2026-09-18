@@ -1,0 +1,377 @@
+#include "Core/Slippi/SlippiWatch.h"
+
+#include <algorithm>
+#include <cstring>
+
+#include "Common/Logging/Log.h"
+#include "Common/Thread.h"
+#include "Common/Timer.h"
+#include "Core/NetPlayProto.h"
+#include "Core/Slippi/SlippiNetplay.h"
+#include <SlippiLib/SlippiGame.h>
+
+#include <SFML/Network/Packet.hpp>
+
+namespace
+{
+// The timeline is addressed by offset from Melee's first frame, which is -123
+// and not 0. Getting this wrong puts every lookup 123 frames out.
+inline size_t SlotFor(s32 frame)
+{
+	return (size_t)(frame - Slippi::GAME_FIRST_FRAME);
+}
+
+// A match is a few minutes. Reserving the whole thing up front costs about
+// 300KB for both players and means the timeline never moves under a reader.
+const size_t kFramesReserved = 60 * 60 * 12; // twelve minutes
+} // namespace
+
+SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, const std::vector<u16> &ports,
+                                     u16 localPort)
+{
+	for (int i = 0; i < 2; i++)
+		m_line[i].resize(kFramesReserved);
+	m_contiguous.store(Slippi::GAME_FIRST_FRAME - 1, std::memory_order_release);
+	m_heard[0] = m_heard[1] = Slippi::GAME_FIRST_FRAME - 1;
+
+	if (enet_initialize() != 0)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Watch] could not start ENet");
+		m_status.store(Status::FAILED, std::memory_order_release);
+		return;
+	}
+
+	// Bound to a known local port, like the netplay client is, because the
+	// players are punching at the address a STUN reply gave for THIS socket and
+	// a different port would not get through.
+	ENetAddress local;
+	local.host = ENET_HOST_ANY;
+	local.port = localPort;
+
+	m_host = enet_host_create(&local, 4, 3, 0, 0);
+	if (!m_host)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Watch] could not open a socket on port %d", localPort);
+		m_status.store(Status::FAILED, std::memory_order_release);
+		return;
+	}
+
+	for (size_t i = 0; i < addrs.size() && i < 2; i++)
+	{
+		ENetAddress addr;
+		if (enet_address_set_host(&addr, addrs[i].c_str()) != 0)
+		{
+			ERROR_LOG(SLIPPI_ONLINE, "[Watch] could not read the address %s", addrs[i].c_str());
+			continue;
+		}
+		addr.port = ports[i];
+
+		// ⚠️ The last argument is what marks us as a watcher rather than a
+		// player. Without it the other end files an unrecognised peer as remote
+		// player 0 and sets that player's active flag from it.
+		ENetPeer *peer = enet_host_connect(m_host, &addr, 3, SLIPPI_CONNECT_SPECTATOR);
+		if (!peer)
+		{
+			ERROR_LOG(SLIPPI_ONLINE, "[Watch] no peer slot for %s", addrs[i].c_str());
+			continue;
+		}
+		m_players.push_back(peer);
+		WARN_LOG(SLIPPI_ONLINE, "[Watch] asking to watch %s:%d", addrs[i].c_str(), ports[i]);
+	}
+
+	if (m_players.empty())
+	{
+		m_status.store(Status::FAILED, std::memory_order_release);
+		return;
+	}
+
+	m_thread = std::thread(&SlippiWatchClient::ThreadFunc, this);
+}
+
+SlippiWatchClient::~SlippiWatchClient()
+{
+	m_run.store(false, std::memory_order_release);
+	if (m_thread.joinable())
+		m_thread.join();
+
+	if (m_host)
+	{
+		for (auto *peer : m_players)
+		{
+			if (peer)
+				enet_peer_disconnect(peer, 0);
+		}
+
+		// Give the goodbyes a moment to go out, then stop caring.
+		ENetEvent ev;
+		while (enet_host_service(m_host, &ev, 250) > 0)
+		{
+			if (ev.type == ENET_EVENT_TYPE_RECEIVE)
+				enet_packet_destroy(ev.packet);
+		}
+
+		for (auto *peer : m_players)
+		{
+			if (peer)
+				enet_peer_reset(peer);
+		}
+		enet_host_destroy(m_host);
+		m_host = nullptr;
+	}
+}
+
+void SlippiWatchClient::ThreadFunc()
+{
+	Common::SetCurrentThreadName("Slippi watch");
+
+	size_t connected = 0;
+
+	while (m_run.load(std::memory_order_acquire))
+	{
+		ENetEvent ev;
+		int got = enet_host_service(m_host, &ev, 100);
+		if (got < 0)
+		{
+			ERROR_LOG(SLIPPI_ONLINE, "[Watch] the socket failed");
+			m_status.store(Status::FAILED, std::memory_order_release);
+			return;
+		}
+
+		if (got > 0)
+		{
+			switch (ev.type)
+			{
+			case ENET_EVENT_TYPE_CONNECT:
+			{
+				connected++;
+				WARN_LOG(SLIPPI_ONLINE, "[Watch] connected to %d of %d", (int)connected, (int)m_players.size());
+
+				// Ask for everything from the start. On a match we joined at the
+				// beginning this asks for nothing and costs one packet; on one
+				// already under way it is the whole thing so far.
+				sf::Packet ask;
+				ask << static_cast<MessageId>(NP_MSG_SLIPPI_WATCH_FROM);
+				ask << (s32)Slippi::GAME_FIRST_FRAME;
+				ENetPacket *epac = enet_packet_create(ask.getData(), ask.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
+				enet_peer_send(ev.peer, 0, epac);
+
+				if (connected >= m_players.size())
+					m_status.store(Status::WATCHING, std::memory_order_release);
+				break;
+			}
+			case ENET_EVENT_TYPE_RECEIVE:
+				OnPacket(ev.packet->data, ev.packet->dataLength, ev.peer);
+				enet_packet_destroy(ev.packet);
+				break;
+
+			case ENET_EVENT_TYPE_DISCONNECT:
+				// One of them going is the end of it. We hold half a match and
+				// half a match cannot be simulated - better to say so than to
+				// show a game that is not happening.
+				WARN_LOG(SLIPPI_ONLINE, "[Watch] a player went away - that is the end of the view");
+				m_status.store(Status::OVER, std::memory_order_release);
+				return;
+
+			default:
+				break;
+			}
+		}
+
+		// Nothing to ask for until we are actually behind.
+		if (m_status.load(std::memory_order_acquire) == Status::WATCHING)
+		{
+			s32 behind;
+			{
+				std::lock_guard<std::mutex> lk(m_lock);
+				behind = std::max(m_heard[0], m_heard[1]) - m_contiguous.load(std::memory_order_acquire);
+			}
+			// A couple of frames behind is just the network. A second behind
+			// with newer frames already in hand is a hole that will not fill
+			// itself, because nothing resends the live stream.
+			if (behind > 60)
+				AskForMissing(m_contiguous.load(std::memory_order_acquire) + 1);
+		}
+	}
+}
+
+// "I hold everything up to N, send me what follows."
+//
+// ⚠️ Rate limited. The answer is a burst of reliable packets and it takes a
+// moment to arrive; asking again every trip round the loop would have the
+// players resending the same stretch of the match over and over.
+void SlippiWatchClient::AskForMissing(s32 from)
+{
+	u64 now = Common::Timer::GetTimeUs();
+	if (now - m_lastAskUs < 500000) // half a second
+		return;
+	m_lastAskUs = now;
+
+	sf::Packet ask;
+	ask << static_cast<MessageId>(NP_MSG_SLIPPI_WATCH_FROM);
+	ask << from;
+
+	for (auto *peer : m_players)
+	{
+		if (!peer)
+			continue;
+		ENetPacket *epac = enet_packet_create(ask.getData(), ask.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
+		enet_peer_send(peer, 0, epac);
+	}
+	WARN_LOG(SLIPPI_ONLINE, "[Watch] asking both of them for frame %d onwards", from);
+}
+
+void SlippiWatchClient::OnPacket(const u8 *data, size_t len, ENetPeer *from)
+{
+	if (len < 1)
+		return;
+
+	sf::Packet packet;
+	packet.append(data, len);
+
+	MessageId mid = 0;
+	if (!(packet >> mid))
+		return;
+
+	switch (mid)
+	{
+	case NP_MSG_SLIPPI_MATCH_SELECTIONS:
+	{
+		// Same order writeToPacket puts them in. Read in full even though only
+		// some of it is used, because a short read leaves the stream misaligned.
+		u8 characterId = 0, characterColor = 0, playerIdx = 0, teamId = 0, altStage = 0;
+		bool isCharacterSelected = false, isStageSelected = false;
+		u16 stageId = 0;
+		u32 rngOffset = 0;
+
+		if (!(packet >> characterId >> characterColor >> isCharacterSelected))
+			return;
+		if (!(packet >> playerIdx))
+			return;
+		if (!(packet >> stageId >> isStageSelected))
+			return;
+		if (!(packet >> rngOffset))
+			return;
+		if (!(packet >> teamId))
+			return;
+		if (!(packet >> altStage))
+			return;
+
+		if (playerIdx > 1)
+			return;
+
+		std::lock_guard<std::mutex> lk(m_lock);
+		if (isCharacterSelected)
+		{
+			m_picks.character[playerIdx] = characterId;
+			m_picks.colour[playerIdx] = characterColor;
+			m_toldPicks[playerIdx] = true;
+		}
+		if (isStageSelected)
+			m_picks.stage = stageId;
+		if (rngOffset)
+			m_picks.seed = rngOffset;
+		m_picks.known = m_toldPicks[0] && m_toldPicks[1];
+
+		WARN_LOG(SLIPPI_ONLINE, "[Watch] player %d is %d (colour %d), stage %d", playerIdx, characterId,
+		         characterColor, stageId);
+		break;
+	}
+	case NP_MSG_SLIPPI_PAD:
+	{
+		// ⚠️ The frame in the header is the NEWEST in the packet and the pads run
+		// BACKWARDS from it - index i is frame-i. Reading it forwards plays the
+		// match in reverse.
+		s32 newest;
+		u8 playerIdx;
+		s32 checksumFrame;
+		u32 checksum;
+		if (!(packet >> newest))
+			return;
+		if (!(packet >> playerIdx))
+			return;
+		if (!(packet >> checksumFrame))
+			return;
+		if (!(packet >> checksum))
+			return;
+		if (playerIdx > 1)
+			return;
+
+		const size_t kHeader = 14; // mid + frame + idx + checksumFrame + checksum
+		if (len <= kHeader)
+			return;
+		const size_t count = (len - kHeader) / SLIPPI_PAD_DATA_SIZE;
+
+		std::lock_guard<std::mutex> lk(m_lock);
+		for (size_t i = 0; i < count; i++)
+		{
+			s32 frame = newest - (s32)i;
+			if (frame < Slippi::GAME_FIRST_FRAME)
+				break;
+			size_t slot = SlotFor(frame);
+			if (slot >= m_line[playerIdx].size())
+				continue; // past the end of a very long match
+
+			// First writer wins. A frame that arrives twice - once live, once in
+			// a catch-up burst - is the same frame, and rewriting it would be
+			// changing history under a reader.
+			if (m_line[playerIdx][slot].have)
+				continue;
+			memcpy(m_line[playerIdx][slot].pad.data(), data + kHeader + i * SLIPPI_PAD_DATA_SIZE,
+			       SLIPPI_PAD_DATA_SIZE);
+			m_line[playerIdx][slot].have = true;
+		}
+
+		if (newest > m_heard[playerIdx])
+			m_heard[playerIdx] = newest;
+
+		Advance();
+		break;
+	}
+	default:
+		break;
+	}
+
+	(void)from;
+}
+
+// How far the picture may safely go: the newest frame we hold for BOTH of them
+// with nothing missing behind it.
+//
+// ⚠️ Called with m_lock held.
+void SlippiWatchClient::Advance()
+{
+	s32 at = m_contiguous.load(std::memory_order_relaxed);
+	const s32 ceiling = std::min(m_heard[0], m_heard[1]);
+
+	while (at < ceiling)
+	{
+		size_t slot = SlotFor(at + 1);
+		if (slot >= m_line[0].size())
+			break;
+		if (!m_line[0][slot].have || !m_line[1][slot].have)
+			break;
+		at++;
+	}
+
+	m_contiguous.store(at, std::memory_order_release);
+}
+
+bool SlippiWatchClient::GetPad(s32 frame, u8 playerIdx, u8 *out) const
+{
+	if (playerIdx > 1 || frame < Slippi::GAME_FIRST_FRAME)
+		return false;
+
+	std::lock_guard<std::mutex> lk(m_lock);
+	size_t slot = SlotFor(frame);
+	if (slot >= m_line[playerIdx].size() || !m_line[playerIdx][slot].have)
+		return false;
+
+	memcpy(out, m_line[playerIdx][slot].pad.data(), SLIPPI_PAD_DATA_SIZE);
+	return true;
+}
+
+SlippiWatchClient::Picks SlippiWatchClient::GetPicks() const
+{
+	std::lock_guard<std::mutex> lk(m_lock);
+	return m_picks;
+}

@@ -336,6 +336,7 @@
     <ClCompile Include="Slippi\SlippiReplayComm.cpp" />
     <ClCompile Include="Slippi\SlippiSavestate.cpp" />
     <ClCompile Include="Slippi\SlippiSpectate.cpp" />
+    <ClCompile Include="Slippi\SlippiWatch.cpp" />
     <ClCompile Include="Slippi\SlippiUser.cpp" />
     <ClCompile Include="State.cpp" />
   </ItemGroup>
@@ -537,6 +538,7 @@
     <ClInclude Include="Slippi\SlippiGameFileLoader.h" />
     <ClInclude Include="Slippi\SlippiMatchmaking.h" />
     <ClInclude Include="Slippi\SlippiRooms.h" />
+    <ClInclude Include="Slippi\SlippiWatch.h" />
     <ClInclude Include="Slippi\SlippiNetplay.h" />
     <ClInclude Include="Slippi\SlippiPad.h" />
     <ClInclude Include="Slippi\SlippiReplayComm.h" />
