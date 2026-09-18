@@ -1134,32 +1134,6 @@ void SlippiNetplayClient::ThreadFunc()
 			bool isConnectedClient = false;
 			switch (netEvent.type)
 			{
-			case ENET_EVENT_TYPE_CONNECT:
-			{
-				// ⚠ This loop had NO connect case at all, because by the time it
-				// runs everybody who is playing has already connected - the loop
-				// above does not exit until they have. Watchers are the first
-				// thing here that arrives mid-match, so without this their
-				// connect event fell through the switch and they were never
-				// added to anyone's list.
-				//
-				// Still only watchers. A peer turning up in the middle of a live
-				// match without saying it is watching is not a player who
-				// belongs here, and is ignored exactly as before.
-				if (netEvent.peer && netEvent.data == SLIPPI_CONNECT_SPECTATOR)
-				{
-					if (std::find(m_spectators.begin(), m_spectators.end(), netEvent.peer) == m_spectators.end())
-						m_spectators.push_back(netEvent.peer);
-					WARN_LOG(SLIPPI_ONLINE, "[Netplay] someone is watching from %x:%d (%d now)",
-					         netEvent.peer->address.host, netEvent.peer->address.port, (int)m_spectators.size());
-
-					sf::Packet sel;
-					writeToPacket(sel, matchInfo.localPlayerSelections);
-					ENetPacket *epac = enet_packet_create(sel.getData(), sel.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
-					enet_peer_send(netEvent.peer, 0, epac);
-				}
-				break;
-			}
 			case ENET_EVENT_TYPE_RECEIVE:
 			{
 				rpac.append(netEvent.packet->data, netEvent.packet->dataLength);
@@ -1240,6 +1214,33 @@ void SlippiNetplayClient::ThreadFunc()
 			}
 			case ENET_EVENT_TYPE_CONNECT:
 			{
+				// Somebody watching, not somebody playing. They get the pad
+				// stream and nothing else: no player index, no entry in
+				// m_server, no say in whether the match is connected, and no
+				// effect on it when they leave.
+				//
+				// ⚠ Tested FIRST. What follows files an unrecognised peer as
+				// remote player 0 - lateConnRemoteIdx defaults to 0 and nothing
+				// checks the address is even in this match - and sets that
+				// player's active flag from it. Anything that does not say it is
+				// watching still takes that path exactly as before.
+				if (netEvent.peer && netEvent.data == SLIPPI_CONNECT_SPECTATOR)
+				{
+					if (std::find(m_spectators.begin(), m_spectators.end(), netEvent.peer) == m_spectators.end())
+						m_spectators.push_back(netEvent.peer);
+					WARN_LOG(SLIPPI_ONLINE, "[Netplay] someone is watching from %x:%d (%d now)",
+					         netEvent.peer->address.host, netEvent.peer->address.port, (int)m_spectators.size());
+
+					// Who we picked, said again just for them. Selections go out
+					// ONCE, before the game starts, so a watcher arriving after
+					// that would otherwise never learn what it is looking at.
+					sf::Packet sel;
+					writeToPacket(sel, matchInfo.localPlayerSelections);
+					ENetPacket *epac = enet_packet_create(sel.getData(), sel.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
+					enet_peer_send(netEvent.peer, 0, epac);
+					break; // Breaks out of case
+				}
+
 				std::stringstream keyStrm;
 				keyStrm << netEvent.peer->address.host << "-" << netEvent.peer->address.port;
 				int lateConnRemoteIdx = 0;
