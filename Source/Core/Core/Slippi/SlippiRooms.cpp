@@ -348,6 +348,9 @@ std::atomic<bool> s_queued{false};
 // code already in hand.
 std::atomic<bool> s_entering{false};
 
+// Where watchers should dial us, guarded by s_state_lock like s_room.
+std::string s_address;
+
 // The match we have already played, so we do not play it twice.
 //
 // ⚠ pd_result ends the pairing, but the room scene is rebuilt the moment the
@@ -384,6 +387,7 @@ std::vector<Rooms::Player> ReadRoster(const json &j, const char *key)
 		p.name = m.value("name", "");
 		p.code = m.value("code", "");
 		p.crowns = m.value("crowns", 0);
+		p.addr = m.value("addr", "");
 		out.push_back(p);
 	}
 	return out;
@@ -415,6 +419,13 @@ void ApplyReply(const std::string &reply)
 	auto opp = j.find("opponent");
 	if (opp != j.end() && opp->is_object())
 		s.opponent_code = opp->value("code", "");
+	// Lifted out of the active roster, which has carried it all along.
+	for (const auto &p : s.active)
+	{
+		if (!p.addr.empty())
+			s.watch_targets.push_back(p.addr);
+	}
+
 	s.queue = ReadRoster(j, "queue");
 	s.lobby = ReadRoster(j, "lobby");
 
@@ -452,10 +463,22 @@ void TickOnce()
 	if (!Rooms::SignedIn() && !Rooms::SignIn())
 		return;
 
+	std::string addr;
+	{
+		std::lock_guard<std::mutex> lock(s_state_lock);
+		addr = s_address;
+	}
+
 	json args{{"p_room", room},
 	          {"p_name", Rooms::Name()},
 	          {"p_code", Rooms::ConnectCode()},
 	          {"p_queued", s_queued.load()}};
+
+	// Only when there is one. pd_tick reads a missing p_addr as "unchanged",
+	// which is what we want between matches - the address stays published while
+	// the pairing lasts rather than being cleared by every idle tick.
+	if (!addr.empty())
+		args["p_addr"] = addr;
 
 	// Only send a pick when there is one. Sending null every tick would be
 	// harmless - pd_tick ignores nulls - but it makes the log unreadable when
@@ -561,6 +584,15 @@ void BeginEnter()
 void AbandonEnter()
 {
 	s_entering.store(false);
+}
+
+void SetAddress(const std::string &addr)
+{
+	std::lock_guard<std::mutex> lock(s_state_lock);
+	if (s_address == addr)
+		return;
+	s_address = addr;
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] watchers can reach us at %s", addr.empty() ? "(nowhere)" : addr.c_str());
 }
 
 void SetQueued(bool queued)

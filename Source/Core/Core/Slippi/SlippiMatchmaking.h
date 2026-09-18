@@ -86,6 +86,16 @@ class SlippiMatchmaking
 	std::unique_ptr<SlippiNetplayClient> GetNetplayClient();
 	std::string GetErrorMessage();
 	int LocalPlayerIndex();
+
+	// Where the matchmaking server saw US, as "host:port".
+	//
+	// ⚠ This is why nothing here needs STUN. It is Slippi's own measurement of
+	// the very socket the match runs on, which is exactly what a STUN binding
+	// request would have gone and asked a third party for. Watchers connect to
+	// this address, so the room publishes it.
+	//
+	// Empty until a match has been arranged.
+	const std::string &LocalExternalAddress() { return m_localExternalAddr; }
 	std::vector<SlippiUser::UserInfo> GetPlayerInfo();
 	std::string GetPlayerName(u8 port);
 	SlippiRank GetPlayerRank(u8 port);
@@ -121,6 +131,7 @@ class SlippiMatchmaking
 	int m_isSwapAttempt = false;
 
 	int m_hostPort;
+	std::string m_localExternalAddr;
 	int m_localPlayerIndex;
 	std::vector<std::string> m_remoteIps;
 	MatchmakeResult m_mmResult;

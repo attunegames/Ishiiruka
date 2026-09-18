@@ -78,6 +78,11 @@ struct Player
 	std::string name;
 	std::string code;   // connect code
 	int crowns = 0;
+	// Where this player's netplay socket is, as "host:port", when they are in a
+	// match and have published it. Only the two playing ever have one, and it is
+	// what a watcher dials. pd_tick has carried it on the active roster since
+	// part 2 - nothing had ever read it.
+	std::string addr;
 };
 
 // What the top of the room draws.
@@ -118,6 +123,16 @@ struct State
 	std::string opponent_code;
 	bool ready = false;         // the pairing is on, go and connect
 
+	// The same thing, lifted out of `active` for the caller that dials them:
+	// where the two playing can be reached, host first, blanks dropped.
+	//
+	// This is the netplay socket the match itself is running on, as Slippi's own
+	// matchmaking server measured it - so a watcher dials an address nothing had
+	// to go and discover.
+	//
+	// Empty until they are in a match and have published it.
+	std::vector<std::string> watch_targets;
+
 	std::vector<Player> active; // the two playing, host first
 	std::vector<Player> queue;  // waiting, in the order the room will pair them
 	std::vector<Player> lobby;  // present, not waiting for a game
@@ -144,6 +159,10 @@ void Leave();
 // what makes it useful: it waits neither for a tick to come back the way
 // State::valid does, nor for the room's code to be known.
 bool InRoom();
+
+// Where Slippi says we can be reached, for watchers to dial. Reported on the
+// next tick, like everything else here. Empty clears it.
+void SetAddress(const std::string &addr);
 
 // On our way into a room whose code we do not have yet.
 //

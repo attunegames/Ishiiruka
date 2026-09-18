@@ -589,6 +589,12 @@ void SlippiMatchmaking::handleMatchmaking()
 
 			if (isLocal)
 			{
+				// Kept WHOLE as well as split. The existing use wants only the
+				// host, to work out whether the two of us are behind the same
+				// router; watchers want the port too, because they are dialling
+				// this socket rather than comparing it with anything.
+				m_localExternalAddr = el.value("ipAddress", "");
+
 				std::vector<std::string> localIpParts;
 				SplitString(el.value("ipAddress", "1.1.1.1:123"), ':', localIpParts);
 				localExternalIp = localIpParts[0];

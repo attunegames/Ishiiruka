@@ -2216,6 +2216,11 @@ void CEXISlippi::prepareOnlineMatchState()
 			// a match. So let's copy the results.
 			recentMmResult = matchmaking->GetMatchmakeResult();
 
+			// Rooms: tell the room where watchers should dial. This is Slippi's
+			// own measurement of the socket this match is running on, so there
+			// is nothing for us to discover and no STUN to do.
+			Rooms::SetAddress(matchmaking->LocalExternalAddress());
+
 			// Use allowed stages from the matchmaking service and pick a new random stage before sending
 			// the selections to the opponent
 			allowedStages = recentMmResult.stages;
