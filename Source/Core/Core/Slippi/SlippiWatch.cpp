@@ -80,6 +80,7 @@ SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, cons
 			continue;
 		}
 		m_players.push_back(peer);
+		m_peerSlot.emplace_back(peer, (u8)i);
 		WARN_LOG(SLIPPI_ONLINE, "[Watch] asking to watch %s:%d", addrs[i].c_str(), ports[i]);
 	}
 
@@ -218,6 +219,7 @@ void SlippiWatchClient::ThreadFunc()
 		if (!m_fallback.empty() && connected < m_needed &&
 		    Common::Timer::GetTimeUs() - m_dialledAtUs > 3000000)
 		{
+			u8 fallbackSlot = 0;
 			for (const auto &f : m_fallback)
 			{
 				ENetAddress addr;
@@ -228,9 +230,11 @@ void SlippiWatchClient::ThreadFunc()
 				if (peer)
 				{
 					m_players.push_back(peer);
+					m_peerSlot.emplace_back(peer, fallbackSlot);
 					WARN_LOG(SLIPPI_ONLINE, "[Watch] ⚠ nobody answered - trying the test address %s:%d",
 					         f.first.c_str(), f.second);
 				}
+				fallbackSlot++;
 			}
 			m_fallback.clear();
 		}
@@ -348,6 +352,16 @@ void SlippiWatchClient::OnPacket(const u8 *data, size_t len, ENetPeer *from)
 			m_picks.character[playerIdx] = characterId;
 			m_picks.colour[playerIdx] = characterColor;
 			m_toldPicks[playerIdx] = true;
+
+			// Which address this one answered on, so a name can be put to them.
+			for (const auto &ps : m_peerSlot)
+			{
+				if (ps.first == from)
+				{
+					m_picks.slot[playerIdx] = ps.second;
+					break;
+				}
+			}
 		}
 		// ⚠️ Resolved the way the players resolve it, which is "the first of them
 		// in port order who chose one" - EXI_DeviceSlippi walks orderedSelections

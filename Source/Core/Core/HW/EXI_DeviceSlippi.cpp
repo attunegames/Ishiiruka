@@ -2878,9 +2878,26 @@ void CEXISlippi::prepareOnlineMatchState()
 	std::string defaultNames[] = {"Player 1", "Player 2", "Player 3", "Player 4"};
 #endif
 
+	// A watcher was never matchmade, so it has no names to hand out - the tags
+	// under the percentages came up blank. The room knows who is playing, and
+	// the watch connection knows which of them Slippi made player 0, which is
+	// not always the room's host. See SlippiWatchClient::Picks::slot.
+	std::string watchNames[2];
+	if (isWatching())
+	{
+		SlippiWatchClient::Picks picks = watch_client->GetPicks();
+		Rooms::State rs = Rooms::Latest();
+		for (int i = 0; i < 2; i++)
+		{
+			size_t slot = picks.slot[i];
+			if (slot < rs.active.size())
+				watchNames[i] = rs.active[slot].name;
+		}
+	}
+
 	for (int i = 0; i < 4; i++)
 	{
-		std::string name = matchmaking->GetPlayerName(i);
+		std::string name = isWatching() && i < 2 ? watchNames[i] : matchmaking->GetPlayerName(i);
 #ifdef LOCAL_TESTING
 		name = defaultNames[i];
 #endif
@@ -2899,7 +2916,7 @@ void CEXISlippi::prepareOnlineMatchState()
 		if (localPlayerIndex == i || !playerIsHuman || (isSameTeam && isTeams))
 			continue;
 
-		auto name = matchmaking->GetPlayerName(i);
+		auto name = isWatching() && i < 2 ? watchNames[i] : matchmaking->GetPlayerName(i);
 		if (name != "")
 			opponentNames.push_back(name);
 	}

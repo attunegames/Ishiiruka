@@ -72,6 +72,12 @@ class SlippiWatchClient
 		u8 colour[2] = {0, 0};
 		u16 stage = 0;
 		u32 seed = 0;
+
+		// Which of the two addresses we dialled each player turned out to be,
+		// so the caller can put a name to them. The room knows who is playing
+		// and in what order; only the connection knows which of them Slippi
+		// made player 0, and that is not always the room's host.
+		u8 slot[2] = {0, 1};
 	};
 	Picks GetPicks() const;
 
@@ -139,6 +145,10 @@ class SlippiWatchClient
 	u16 m_stageOf[2] = {0, 0};
 	bool m_stageSet[2] = {false, false};
 	bool m_toldPicks[2] = {false, false};
+
+	// Which target slot each peer was dialled for. More peers than slots once
+	// the test fallback has run, and several may map to the same player.
+	std::vector<std::pair<ENetPeer *, u8>> m_peerSlot;
 
 	u64 m_lastAskUs = 0;
 };
