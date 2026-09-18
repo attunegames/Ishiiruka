@@ -700,14 +700,61 @@ void SlippiNetplayClient::Send(sf::Packet &packet)
 		ENetPacket *epac = enet_packet_create(packet.getData(), packet.getDataSize(), flags);
 		int sendResult = enet_peer_send(m_server[i], channelId, epac);
 	}
+
+	SendToSpectators(packet);
+}
+
+// The same packet again, to anyone watching.
+//
+// ⚠ Only the ones that describe the match, and never an ack. A watcher sends
+// nothing back - it has no inputs and nothing is waiting on it - so an ack from
+// one would be answering a question nobody asked, and the pad queue is trimmed
+// by the SLOWEST acker. Copying acks out to watchers would let a watcher's
+// silence hold the players' queues open.
+void SlippiNetplayClient::SendToSpectators(sf::Packet &packet)
+{
+	if (m_spectators.empty())
+		return;
+
+	MessageId mid = ((u8 *)packet.getData())[0];
+	if (mid != NP_MSG_SLIPPI_PAD && mid != NP_MSG_SLIPPI_MATCH_SELECTIONS)
+		return;
+
+	enet_uint32 flags = mid == NP_MSG_SLIPPI_PAD ? ENET_PACKET_FLAG_UNSEQUENCED : ENET_PACKET_FLAG_RELIABLE;
+	u8 channelId = mid == NP_MSG_SLIPPI_PAD ? 1 : 0;
+
+	for (auto *peer : m_spectators)
+	{
+		if (!peer)
+			continue;
+		ENetPacket *epac = enet_packet_create(packet.getData(), packet.getDataSize(), flags);
+		enet_peer_send(peer, channelId, epac);
+	}
 }
 
 void SlippiNetplayClient::Disconnect()
 {
 	ENetEvent netEvent;
 	slippiConnectStatus.store(SlippiConnectStatus::NET_CONNECT_STATUS_DISCONNECTED, std::memory_order_release);
+
+	// Tell anyone watching it is over, BEFORE the early return below. Watchers
+	// are not in activeConnections - that map is what the match is made of - so
+	// a match with watchers and no live players would otherwise leave them
+	// holding a connection to a game that has finished.
+	for (auto *peer : m_spectators)
+	{
+		if (peer)
+			enet_peer_disconnect(peer, 0);
+	}
+
 	if (activeConnections.empty())
 	{
+		for (auto *peer : m_spectators)
+		{
+			if (peer)
+				enet_peer_reset(peer);
+		}
+		m_spectators.clear();
 		return;
 	}
 
@@ -748,6 +795,13 @@ void SlippiNetplayClient::Disconnect()
 			enet_peer_reset(peer.first);
 		}
 	}
+	for (auto *peer : m_spectators)
+	{
+		if (peer)
+			enet_peer_reset(peer);
+	}
+	m_spectators.clear();
+
 	activeConnections.clear();
 	for (auto &active : playerActive)
 		active.store(false, std::memory_order_release);
@@ -827,6 +881,39 @@ void SlippiNetplayClient::ThreadFunc()
 				{
 					INFO_LOG(SLIPPI_ONLINE, "[Netplay] got connect event with nil peer");
 					continue;
+				}
+
+				// Somebody watching, not somebody playing. They get the pad
+				// stream and nothing else: not a player index, not an entry in
+				// m_server, no say in whether the match is connected, and no
+				// effect on it when they leave.
+				//
+				// ⚠ Tested BEFORE anything else in this handler. What follows
+				// files an unrecognised peer as remote player 0 and sets that
+				// player's active flag, which is wrong for a watcher and was
+				// always wrong for a stranger.
+				if (netEvent.data == SLIPPI_CONNECT_SPECTATOR)
+				{
+					if (std::find(m_spectators.begin(), m_spectators.end(), netEvent.peer) == m_spectators.end())
+						m_spectators.push_back(netEvent.peer);
+					WARN_LOG(SLIPPI_ONLINE, "[Netplay] someone is watching from %x:%d (%d now)",
+					         netEvent.peer->address.host, netEvent.peer->address.port, (int)m_spectators.size());
+
+					// Who we picked, said again just for them. Selections go out
+					// ONCE, before the game starts, so a watcher arriving after
+					// that would otherwise never learn what it is looking at.
+					//
+					// ⚠ A watcher has to talk to BOTH players, not one of them:
+					// each client only ever sends its OWN pads and its OWN
+					// selections, so one connection is half a match.
+					{
+						sf::Packet sel;
+						writeToPacket(sel, matchInfo.localPlayerSelections);
+						ENetPacket *epac =
+						    enet_packet_create(sel.getData(), sel.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
+						enet_peer_send(netEvent.peer, 0, epac);
+					}
+					break; // Breaks out of case
 				}
 
 				std::stringstream keyStrm;
@@ -1047,6 +1134,32 @@ void SlippiNetplayClient::ThreadFunc()
 			bool isConnectedClient = false;
 			switch (netEvent.type)
 			{
+			case ENET_EVENT_TYPE_CONNECT:
+			{
+				// ⚠ This loop had NO connect case at all, because by the time it
+				// runs everybody who is playing has already connected - the loop
+				// above does not exit until they have. Watchers are the first
+				// thing here that arrives mid-match, so without this their
+				// connect event fell through the switch and they were never
+				// added to anyone's list.
+				//
+				// Still only watchers. A peer turning up in the middle of a live
+				// match without saying it is watching is not a player who
+				// belongs here, and is ignored exactly as before.
+				if (netEvent.peer && netEvent.data == SLIPPI_CONNECT_SPECTATOR)
+				{
+					if (std::find(m_spectators.begin(), m_spectators.end(), netEvent.peer) == m_spectators.end())
+						m_spectators.push_back(netEvent.peer);
+					WARN_LOG(SLIPPI_ONLINE, "[Netplay] someone is watching from %x:%d (%d now)",
+					         netEvent.peer->address.host, netEvent.peer->address.port, (int)m_spectators.size());
+
+					sf::Packet sel;
+					writeToPacket(sel, matchInfo.localPlayerSelections);
+					ENetPacket *epac = enet_packet_create(sel.getData(), sel.getDataSize(), ENET_PACKET_FLAG_RELIABLE);
+					enet_peer_send(netEvent.peer, 0, epac);
+				}
+				break;
+			}
 			case ENET_EVENT_TYPE_RECEIVE:
 			{
 				rpac.append(netEvent.packet->data, netEvent.packet->dataLength);
@@ -1056,6 +1169,17 @@ void SlippiNetplayClient::ThreadFunc()
 			}
 			case ENET_EVENT_TYPE_DISCONNECT:
 			{
+				// A watcher leaving is not an event in the match. Take them off
+				// the list and say nothing - none of what follows applies to
+				// them, and playerActive least of all.
+				auto watcher = std::find(m_spectators.begin(), m_spectators.end(), netEvent.peer);
+				if (watcher != m_spectators.end())
+				{
+					m_spectators.erase(watcher);
+					WARN_LOG(SLIPPI_ONLINE, "[Netplay] a watcher left (%d now)", (int)m_spectators.size());
+					break;
+				}
+
 				std::stringstream keyStrm;
 				keyStrm << netEvent.peer->address.host << "-" << netEvent.peer->address.port;
 				auto key = keyStrm.str();

@@ -32,6 +32,20 @@
 #define SLIPPI_ONLINE_LOCKSTEP_INTERVAL 30 // Number of frames to wait before attempting to time-sync
 #define SLIPPI_PING_DISPLAY_INTERVAL 60
 #define SLIPPI_REMOTE_PLAYER_MAX 3
+
+// What a watcher puts in the ENet connect packet's user data so the people
+// playing can tell it apart from a player.
+//
+// ⚠ This is not decoration. The connect handler used to take ANY unrecognised
+// peer and file it as remote player 0 - earlyConnRemoteIdx defaults to 0 and
+// nothing rejected an address that was not in the match - which set that
+// player's "active" flag from a stranger's connection. A watcher has to say
+// what it is on the way in, and anything that does not say stays a player, so
+// the path the two people playing take is unchanged.
+//
+// Players connect with 0, which is what enet_host_connect has always been
+// passed here.
+#define SLIPPI_CONNECT_SPECTATOR 0x50535043 // 'PSPC'
 #define SLIPPI_REMOTE_PLAYER_COUNT 3
 #define SLIPPI_PLAYER_COUNT_MAX (SLIPPI_REMOTE_PLAYER_MAX + 1)
 
@@ -229,6 +243,20 @@ class SlippiNetplayClient
 
 	ENetHost *m_client = nullptr;
 	std::vector<ENetPeer *> m_server;
+
+	// People watching, who are NOT players.
+	//
+	// Kept apart from m_server on purpose. m_server is what the match is made
+	// of - it decides when everyone is connected, it is what disconnects end the
+	// game, and its indices are player indices. A watcher is none of those
+	// things: they arrive whenever, they leave whenever, and neither should be
+	// felt by the two people playing.
+	//
+	// The only thing they share is the pad stream, which Send() copies to them.
+	//
+	// ⚠ Owned by the network thread, like m_server and activeConnections.
+	std::vector<ENetPeer *> m_spectators;
+
 	std::thread m_thread;
 	u8 m_remotePlayerCount = 0;
 
@@ -323,6 +351,7 @@ class SlippiNetplayClient
 	u8 PlayerIdxFromPort(u8 port);
 	unsigned int OnData(sf::Packet &packet, ENetPeer *peer);
 	void Send(sf::Packet &packet);
+	void SendToSpectators(sf::Packet &packet);
 	void Disconnect();
 	// Network-thread only — call from inside ThreadFunc.
 	bool AreAllConnectionsDisconnected();
