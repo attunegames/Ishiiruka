@@ -519,18 +519,35 @@ namespace Rooms
 {
 void Enter(const std::string &room)
 {
-	s_entering.store(true);
+	// ⚠ Did anyone announce this entry before now? BeginEnter is the moment the
+	// decision was made, and everything the player has done SINCE belongs to
+	// this room rather than the last one.
+	//
+	// Making a room is two network calls, and the room screen is up and taking
+	// button presses for the whole of them - so pressing Start lands in that
+	// window. Clearing the queue here unconditionally threw that press away:
+	// the screen said "In the Queue" from its own flag while the heartbeat
+	// reported us idle for ever, and one queued player never pairs with anyone.
+	//
+	// ⚠ Read BEFORE Leave(), which clears it.
+	const bool announced = s_entering.load();
 
 	Leave();
+	s_entering.store(true);
 
 	{
 		std::lock_guard<std::mutex> lock(s_state_lock);
 		s_room = room;
 		s_state = State(); // the previous room's view is not this room's
 	}
-	s_queued.store(false);
-	s_pick_char.store(Draft::NOT_PICKED);
-	s_pick_stage.store(Draft::NOT_PICKED);
+
+	// Only the previous room's, and only when this entry came out of nowhere.
+	if (!announced)
+	{
+		s_queued.store(false);
+		s_pick_char.store(Draft::NOT_PICKED);
+		s_pick_stage.store(Draft::NOT_PICKED);
+	}
 
 	s_ticking.store(true);
 	s_tick_thread = std::thread(TickLoop);
