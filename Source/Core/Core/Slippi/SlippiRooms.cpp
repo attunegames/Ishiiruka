@@ -574,7 +574,7 @@ void AskIdentityOnce()
 		return;
 
 	json args{{"p_room", room}};
-	std::string reply = Rpc("pd_room_identity", args.dump());
+	std::string reply = Rooms::Rpc("pd_room_identity", args.dump());
 	if (reply.empty())
 		return;
 

@@ -3440,7 +3440,7 @@ void CEXISlippi::prepareRoomState()
 	// blank padded; the passcode is empty for a public room, which has none.
 	auto put_fixed = [&](const std::string &v, int len) {
 		std::string t = v;
-		t.resize(len, ' ');
+		t.resize(len, '\0');
 		for (int i = 0; i < len; i++)
 			m_read_queue.push_back((u8)t[i]);
 	};
