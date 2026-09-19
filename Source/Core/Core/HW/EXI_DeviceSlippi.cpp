@@ -3369,6 +3369,11 @@ void CEXISlippi::prepareRoomState()
 	    matchmaking->GetMatchmakeState() == SlippiMatchmaking::CONNECTION_SUCCESS)
 		flags |= ROOM_FLAG_CONNECTED;
 
+	// Unlisted, and so it has a passcode. The screen stars both out until
+	// somebody asks to see them.
+	if (!s.listed)
+		flags |= ROOM_FLAG_PRIVATE;
+
 	auto pick = [](int v) -> u8 {
 		return v == Rooms::Draft::NOT_PICKED ? (u8)ROOM_NOT_PICKED : (u8)v;
 	};
@@ -3419,6 +3424,28 @@ void CEXISlippi::prepareRoomState()
 	opp.resize(ROOM_STATE_OPPCODE_LEN);  // value-initialised: zero padded
 	for (int i = 0; i < ROOM_STATE_OPPCODE_LEN; i++)
 		m_read_queue.push_back((u8)opp[i]);
+
+	// Crowns, in the SAME order as the names above, so the module reads the two
+	// with one index. Capped at 255 - past that it is not a number anybody is
+	// going to read off a band.
+	auto put_crowns = [&](const std::vector<Rooms::Player> &v, int slots) {
+		for (int i = 0; i < slots; i++)
+			m_read_queue.push_back(i < (int)v.size() ? (u8)std::min(v[i].crowns, 255) : (u8)0);
+	};
+	put_crowns(s.active, 2);
+	put_crowns(s.queue, ROOM_STATE_MAX_QUEUE);
+	put_crowns(s.lobby, ROOM_STATE_MAX_LOBBY);
+
+	// The room's own code, and the passcode of a private one. Fixed width and
+	// blank padded; the passcode is empty for a public room, which has none.
+	auto put_fixed = [&](const std::string &v, int len) {
+		std::string t = v;
+		t.resize(len, ' ');
+		for (int i = 0; i < len; i++)
+			m_read_queue.push_back((u8)t[i]);
+	};
+	put_fixed(s.room, ROOM_STATE_CODE_LEN);
+	put_fixed(s.passcode, ROOM_STATE_PASS_LEN);
 }
 
 

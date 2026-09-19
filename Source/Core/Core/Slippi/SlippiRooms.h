@@ -126,6 +126,13 @@ struct State
 	bool valid = false;        // false until a tick has come back
 
 	std::string room;
+
+	// The room's own identity, asked for ONCE when the heartbeat starts,
+	// because neither ever changes - see pd_room_identity. A private room has
+	// a passcode and is not listed; a public one is listed and has none.
+	std::string passcode;
+	bool listed = true;
+
 	std::string state;         // waiting | ready | stun | heartbeat | error
 	std::string match_id;
 	bool is_host = false;

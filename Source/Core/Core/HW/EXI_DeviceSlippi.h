@@ -44,7 +44,21 @@
 // what that command takes; the extra two keep the struct aligned.
 #define ROOM_STATE_OPPCODE ROOM_STATE_NAMES_END
 #define ROOM_STATE_OPPCODE_LEN 20
-#define ROOM_STATE_SIZE (ROOM_STATE_NAMES_END + ROOM_STATE_OPPCODE_LEN)
+
+// How many crowns each of those names has, in the SAME order and the same
+// count - two playing, then the queue, then the lobby. One byte each, capped,
+// because a crown count past 255 is not a thing that needs drawing.
+#define ROOM_STATE_CROWNS (ROOM_STATE_OPPCODE + ROOM_STATE_OPPCODE_LEN)
+
+// The room's own code, and the passcode of a private one. Fixed width, blank
+// padded, so the module indexes rather than parses. The passcode is empty for
+// a public room - those are listed and have none.
+#define ROOM_STATE_CODE   (ROOM_STATE_CROWNS + ROOM_STATE_NAMES)
+#define ROOM_STATE_CODE_LEN 8
+#define ROOM_STATE_PASS   (ROOM_STATE_CODE + ROOM_STATE_CODE_LEN)
+#define ROOM_STATE_PASS_LEN 8
+
+#define ROOM_STATE_SIZE (ROOM_STATE_PASS + ROOM_STATE_PASS_LEN)
 
 // Bit 2 of the flags byte: the pairing is on and the game should go and
 // connect. Distinct from PLAYING, which means a match is already under way.
@@ -77,6 +91,10 @@
 #define ROOM_FLAG_WATCHING 0x20
 
 // 0xFF rather than 0 for "not picked": 0 is Captain Falcon and a real stage.
+// Bit 6: this room is PRIVATE - unlisted, and it has a passcode. The screen
+// stars the code and the passcode out until somebody holds R or L.
+#define ROOM_FLAG_PRIVATE 0x40
+
 #define ROOM_NOT_PICKED 0xFF
 
 // Rooms: the shape of the CMD_ROOM_LIST_READ reply. Duplicated by hand in the

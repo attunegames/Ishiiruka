@@ -454,6 +454,14 @@ void ApplyReply(const std::string &reply)
 	// while it goes.
 	if (!s_played_match.empty() && s.match_id == s_played_match)
 		s.ready = false;
+
+	// ⚠️ Carried across. Everything below is rebuilt from the reply and then
+	// assigned wholesale, and the room's code and passcode are NOT in a tick -
+	// they are asked for once, by AskIdentityOnce. Without this they would be
+	// wiped half a second after they arrived.
+	s.passcode = s_state.passcode;
+	s.listed = s_state.listed;
+
 	s_state = s;
 }
 
@@ -548,9 +556,50 @@ void TickOnce()
 	ApplyReply(reply);
 }
 
+// The room's own code and passcode, which never change.
+//
+// ⚠️ Once, on this thread, not on every tick and not in Enter(). Enter() is
+// called from a scene change and returns immediately by design - a network
+// round trip there is a stalled frame - and pd_tick already runs twice a
+// second for everyone in every room, so an unchanging string has no business
+// in it.
+void AskIdentityOnce()
+{
+	std::string room;
+	{
+		std::lock_guard<std::mutex> lock(s_state_lock);
+		room = s_room;
+	}
+	if (room.empty())
+		return;
+
+	json args{{"p_room", room}};
+	std::string reply = Rpc("pd_room_identity", args.dump());
+	if (reply.empty())
+		return;
+
+	try
+	{
+		json j = json::parse(reply);
+		std::lock_guard<std::mutex> lock(s_state_lock);
+		s_state.passcode = Str(j, "passcode");
+		s_state.listed = j.value("listed", true);
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] %s is %s", room.c_str(),
+		         s_state.listed ? "public" : "private");
+	}
+	catch (...)
+	{
+		// ⚠️ A room made before this function existed answers PGRST202 rather
+		// than JSON. The corner shows no passcode and everything else carries on.
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] could not read the room's identity");
+	}
+}
+
 void TickLoop()
 {
 	Common::SetCurrentThreadName("Rooms heartbeat");
+
+	AskIdentityOnce();
 
 	while (s_ticking.load())
 	{
