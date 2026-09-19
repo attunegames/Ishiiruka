@@ -305,9 +305,12 @@ begin
 
   delete from pd_members where room = p_room and player = v_me;
 
-  -- The owner walking out closes it. Anyone left is sent back to the menu by
-  -- their own next tick finding no room, which is the same path a room that
-  -- simply went quiet takes.
+  -- ⚠️ SUPERSEDED by 05-ownership.sql, which hands the room to whoever has
+  -- been in it longest instead of closing it. This version deleted the room
+  -- and expected anyone left to notice on their next tick; they did not, and
+  -- sat in a roster that no longer existed anywhere. Kept here because this
+  -- file is the original migration and rewriting history would make the two
+  -- disagree about what was actually run.
   delete from pd_rooms where code = p_room and owner = v_me;
 
   return json_build_object('ok', true);
