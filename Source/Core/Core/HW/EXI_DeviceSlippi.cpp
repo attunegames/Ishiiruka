@@ -2689,6 +2689,21 @@ void CEXISlippi::prepareOnlineMatchState()
 		rngOffset = isDecider ? lps.rngOffset : rps[0].rngOffset;
 		INFO_LOG(SLIPPI_ONLINE, "Rng Offset: 0x%x", rngOffset);
 
+		// Tell the ROOM what we are actually playing, so the band across the top
+		// of the room screen can draw it for everybody who is not one of us.
+		//
+		// ⚠️ From HERE, not from the draft's own steps. A step reports the field
+		// it is NOT choosing as 0 - and 0 is Captain Falcon, and 0 is a real
+		// stage. Read off the steps, the ban published two Captain Falcons and a
+		// later step overwrote Dream Land with stage 0. These are the resolved
+		// values, the same ones that go into the match block below, and they are
+		// only reached once both players have chosen.
+		//
+		// ⚠️ Ours only. pd_tick takes a character from the player it belongs to
+		// and ignores anyone else's, so each of the two reports itself.
+		if (!isWatching())
+			Rooms::ReportPick(lps.characterId, lps.characterColor, stageId);
+
 		// Check if everyone is the same color
 		auto firstTeamId = orderedSelections[0]->teamId;
 		bool areAllSameTeam = true;
@@ -3887,23 +3902,6 @@ void CEXISlippi::handleGamePrepStepComplete(const SlippiExiTypes::GpCompleteStep
 	// this would inject a stranger's bans and picks into their set.
 	if (isWatching())
 		return;
-
-	// Tell the ROOM as well as the opponent. The two of them settle this between
-	// themselves over netplay, and nobody else in the room is in that
-	// conversation - so without this the band across the top of the room screen
-	// stays empty while two people it can name by name pick a stage.
-	{
-		const int chr =
-		    query.char_selection == 0xFF ? Rooms::Draft::NOT_PICKED : query.char_selection;
-		const int stage =
-		    query.stage_selections[0] == 0xFF ? Rooms::Draft::NOT_PICKED : query.stage_selections[0];
-
-		// ⚠️ stage_selections[0] is THIS step's stage - a ban on the ban step and
-		// the choice on the pick step - so the ban must not go out as the stage or
-		// the room draws the one stage they agreed not to play on.
-		Rooms::ReportPick(chr, query.char_color_selection,
-		                  query.step_idx == 0 ? Rooms::Draft::NOT_PICKED : stage);
-	}
 
 	if (slippi_netplay)
 		slippi_netplay->SendGamePrepStep(res);
