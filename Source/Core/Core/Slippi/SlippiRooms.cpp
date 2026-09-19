@@ -599,11 +599,22 @@ void TickLoop()
 {
 	Common::SetCurrentThreadName("Rooms heartbeat");
 
-	AskIdentityOnce();
+	// ⚠️ AFTER the first tick, not before it. pd_room_identity only answers
+	// somebody with a member row in the room - and the member row is inserted by
+	// pd_tick itself, on its first call. Asked before that, it matched no rows,
+	// returned null, and the read threw: "could not read the room's identity" on
+	// every room anybody made.
+	bool asked = false;
 
 	while (s_ticking.load())
 	{
 		TickOnce();
+
+		if (!asked)
+		{
+			asked = true;
+			AskIdentityOnce();
+		}
 
 		// Two seconds, in short naps, so leaving a room does not wait out a
 		// long sleep before the thread notices.
