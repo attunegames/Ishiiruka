@@ -183,6 +183,7 @@ class CEXISlippi : public IEXIDevice
 		// Watch the match the room is playing. No payload - Dolphin already
 		// holds the room state, and with it both players' addresses.
 		CMD_ROOM_WATCH = 0xCB,
+		CMD_ROOM_LEAVE = 0xCC,  // hold B: out of the room altogether
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -281,6 +282,7 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_ROOM_LIST, 0x1},         // one byte: which mode, 0xFF for any
 	    {CMD_ROOM_LIST_READ, 0x0},
 	    {CMD_ROOM_WATCH, 0x0},
+	    {CMD_ROOM_LEAVE, 0x1},        // one byte: were we IN a room, or just browsing
 
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
@@ -382,6 +384,7 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomQueue(u8 *payload);
 	void handleRoomJoin(u8 *payload);
 	void handleRoomWatch();
+	void handleRoomLeave(u8 *payload);
 
 	// True once a watch is up and has enough to show. Everything a watcher does
 	// differently is gated on this, so a player's match takes exactly the paths

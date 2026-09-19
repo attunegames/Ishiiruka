@@ -3113,6 +3113,29 @@ void CEXISlippi::handleRoomQueue(u8 *payload)
 	Rooms::SetQueued(payload[0] != 0);
 }
 
+// Rooms: out of the room altogether, from a held B.
+//
+// ⚠️ payload[0] says whether there was a room to leave at all. Walking off the
+// list of PUBLIC rooms is not leaving one - you were never in it - and saying
+// otherwise drops the client out of the room it was already sitting in.
+//
+// ⚠️ Rooms::Leave() blocks, for the current nap plus one round trip. That is
+// deliberate and this is the right place to pay it: the member row has to
+// actually go before anything else happens, and Melee is on its way out of the
+// scene, where a short stall does not show.
+void CEXISlippi::handleRoomLeave(u8 *payload)
+{
+	if (!payload[0])
+	{
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] leaving the room list");
+		return;
+	}
+
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] leaving the room");
+	Rooms::SetQueued(false);
+	Rooms::Leave();
+}
+
 // Rooms: join a room by code.
 //
 // Starts the heartbeat, which is what actually puts a member row in the room -
@@ -4166,6 +4189,9 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_ROOM_QUEUE:
 			handleRoomQueue(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_LEAVE:
+			handleRoomLeave(&memPtr[bufLoc + 1]);
 			break;
 		case CMD_ROOM_JOIN:
 			handleRoomJoin(&memPtr[bufLoc + 1]);
