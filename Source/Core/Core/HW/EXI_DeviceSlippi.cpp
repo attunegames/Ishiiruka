@@ -2307,6 +2307,15 @@ void CEXISlippi::prepareOnlineMatchState()
 		{
 			slippi_netplay = std::make_unique<SlippiNetplayClient>(true);
 			slippi_netplay->MakeWatcher(SlippiWatchClient::WATCHER_PORT);
+
+			// ⚠️ Nothing from a match this client played EARLIER belongs to the
+			// one it is watching. recentMmResult is filled in where matchmaking
+			// hands over a netplay client - which a watcher never reaches,
+			// because it has just built its own - so whatever was last in there
+			// rode along: another match's id, and an items bitfield that
+			// prepareOnlineMatchState turns into items ON at high frequency.
+			// Items on one screen and not the other is a divergence.
+			recentMmResult = SlippiMatchmaking::MatchmakeResult();
 			WARN_LOG(SLIPPI_ONLINE, "[Watch] starting %d vs %d on stage %d, seed %08x", picks.character[0],
 			         picks.character[1], picks.stage, picks.seed);
 		}

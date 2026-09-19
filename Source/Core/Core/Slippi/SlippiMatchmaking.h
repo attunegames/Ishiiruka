@@ -76,7 +76,11 @@ class SlippiMatchmaking
 		std::string id = "";
 		std::vector<SlippiUser::UserInfo> players;
 		std::vector<u16> stages;
-		u32 items;
+		// ⚠️ Initialised, unlike before. Every other field here has a default
+		// and this one did not, so a MatchmakeResult that was never filled in
+		// carried whatever the memory held - and prepareOnlineMatchState turns
+		// a non-zero value into items ON at high frequency.
+		u32 items = 0;
 	};
 
 	void FindMatch(MatchSearchSettings settings);
