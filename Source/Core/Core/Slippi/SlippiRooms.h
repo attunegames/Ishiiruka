@@ -204,6 +204,15 @@ void AbandonEnter();
 // rather than immediately, which is why it returns nothing to check.
 void SetQueued(bool queued);
 
+/* Whether we have asked to be in the queue.
+ *
+ * ⚠️ Dolphin's answer, not the room's, and deliberately. pd_tick's position
+ * is "how many are ahead of me, plus one", which is 1 for somebody standing
+ * in the lobby who has pressed nothing - so it can never mean "not queued",
+ * whatever the field has always claimed. This survives the game module being
+ * reloaded, which a local flag over there does not. */
+bool Queued();
+
 // What we picked, reported on the next tick. Each client may only report its
 // OWN character; either of the two may report the stage.
 void ReportPick(int character, int color, int stage);

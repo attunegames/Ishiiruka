@@ -742,6 +742,11 @@ void SetQueued(bool queued)
 	s_queued.store(queued);
 }
 
+bool Queued()
+{
+	return s_queued.load();
+}
+
 void ReportPick(int character, int color, int stage)
 {
 	// ⚠️ NOT_PICKED means "nothing to say about this one", NOT "clear it". The

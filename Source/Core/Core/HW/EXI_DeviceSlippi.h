@@ -95,6 +95,10 @@
 // stars the code and the passcode out until somebody holds R or L.
 #define ROOM_FLAG_PRIVATE 0x40
 
+// Bit 7: we have asked to be in the queue. See the note where it is set -
+// the position field cannot answer this and never could.
+#define ROOM_FLAG_QUEUED 0x80
+
 #define ROOM_NOT_PICKED 0xFF
 
 // Rooms: the shape of the CMD_ROOM_LIST_READ reply. Duplicated by hand in the

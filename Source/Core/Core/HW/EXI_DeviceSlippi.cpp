@@ -3374,6 +3374,14 @@ void CEXISlippi::prepareRoomState()
 	if (!s.listed)
 		flags |= ROOM_FLAG_PRIVATE;
 
+	// In the queue. ⚠️ Sent as a flag because the POSITION field cannot say
+	// it: pd_tick computes it as "how many are ahead of me, plus one", which
+	// is 1 for somebody who has pressed nothing, so 1 means both "first in the
+	// queue" and "not in it". The room screen was telling people in the lobby
+	// they were in the queue.
+	if (Rooms::Queued())
+		flags |= ROOM_FLAG_QUEUED;
+
 	auto pick = [](int v) -> u8 {
 		return v == Rooms::Draft::NOT_PICKED ? (u8)ROOM_NOT_PICKED : (u8)v;
 	};
