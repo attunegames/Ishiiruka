@@ -3203,6 +3203,8 @@ void CEXISlippi::prepareRoomDraftDrive()
 		draft_last_local_step = -1;
 		draft_drive_armed = false;
 		draft_drive_frame = 0;
+		draft_drive_listen = 0;
+		draft_fetch_step = -1;
 	}
 	draft_drive_last_ask = now;
 
@@ -3211,16 +3213,34 @@ void CEXISlippi::prepareRoomDraftDrive()
 
 	if (random_stages && slippi_netplay && !isWatching())
 	{
-		u8 local_port = slippi_netplay->IsDecider() ? 0 : 1;
-		u8 ban_first = rs.is_host ? local_port : (u8)(1 - local_port);
-		bool i_ban_first = (ban_first == local_port);
+		// ⚠ WHICH STEP IS OURS COMES FROM THE DRAFT. It used to be worked out
+		// here, from the same rule the room publishes as ROOM_STATE_BAN_FIRST -
+		// and the two disagreed. One client announced "driving draft step 0" and
+		// auto-pressed into a screen that was waiting for its OPPONENT to ban,
+		// while the draft sat on the other client waiting for a human. Fourteen
+		// minutes later somebody banned by hand and nothing lined up again.
+		//
+		// Two copies of a rule is one too many when only one of them decides
+		// anything. The draft asks each client about the step it is NOT
+		// performing, every frame, starting immediately - so the step it asks
+		// about is the opponent's and the other one is ours. No rule, no race
+		// with the room's own state, and nothing to keep in sync.
+		//
+		// The client performing step 0 hears nothing, because it has nothing to
+		// wait for. That silence is the answer for it, after long enough that a
+		// first ask would certainly have arrived.
+		int my_step = -1;
+		if (draft_fetch_step == 0)
+			my_step = 1;               // asked about the ban, so the pick is ours
+		else if (draft_fetch_step == 1)
+			my_step = 0;               // asked about the pick, so the ban was ours
+		else if (draft_fetch_step < 0 && draft_drive_listen >= ROOM_DRIVE_LISTEN_FRAMES)
+			my_step = 0;               // asked about nothing at all: the ban is ours
 
-		// The one step this client answers: the first player takes the ban, the
-		// second takes the pick. Nothing past step 1 is ever driven - steps 2
-		// and 3 are the characters and belong to the player.
-		int my_step = i_ban_first ? 0 : 1;
+		if (draft_drive_listen < ROOM_DRIVE_LISTEN_FRAMES)
+			draft_drive_listen++;
 
-		bool already_done = draft_last_local_step >= my_step;
+		bool already_done = my_step < 0 || draft_last_local_step >= my_step;
 		bool my_turn = false;
 		if (!already_done)
 		{
@@ -3246,8 +3266,9 @@ void CEXISlippi::prepareRoomDraftDrive()
 				// same stage every single match. Rolled ONCE per step, here,
 				// because the ASM has no random number to hand.
 				draft_drive_hold = (u8)(12 + (generator() % 36));
-				WARN_LOG(SLIPPI_ONLINE, "[Rooms] driving draft step %d, sweep %d",
-				         my_step, draft_drive_hold);
+				WARN_LOG(SLIPPI_ONLINE,
+				         "[Rooms] driving draft step %d, sweep %d (draft asked about %d)",
+				         my_step, draft_drive_hold, draft_fetch_step);
 			}
 
 			// ⚠ The FRAME COUNT lives here, not in the ASM. This is asked once
@@ -4202,6 +4223,12 @@ void CEXISlippi::prepareGamePrepOppStep(const SlippiExiTypes::GpFetchStepQuery &
 		delay_count = 0;
 	}
 #else
+	// ⚠ EVERY ask, not only the ones that can be answered. A client only ever
+	// asks about a step it is NOT performing, so this is the draft telling us
+	// whose turn it is - and the ones that go unanswered say it FIRST, which is
+	// when it is still worth knowing.
+	draft_fetch_step = query.step_idx;
+
 	SlippiGamePrepStepResults res;
 	if (slippi_netplay && slippi_netplay->GetGamePrepResults(query.step_idx, res))
 	{

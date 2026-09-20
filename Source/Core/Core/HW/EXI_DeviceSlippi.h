@@ -69,6 +69,13 @@
  * The gap is a RELEASE, not politeness: two presses with no frames between
  * them are one held button, and the panel would never see a second press. */
 #define ROOM_DRIVE_GAP_FRAMES 20
+/* How long to listen before concluding that step 0 is OURS.
+ *
+ * ⚠ The client that does NOT perform step 0 starts asking for it at once,
+ * every frame. The client that DOES perform it never asks for it at all - so
+ * silence is the answer, and silence needs a length. Two seconds is far longer
+ * than the first ask takes to arrive and far shorter than the draft's clock. */
+#define ROOM_DRIVE_LISTEN_FRAMES 120
 
 #define ROOM_STATE_SETTINGS 0x0A
 #define ROOM_SETTING_DRAFT  0x01   /* stages are drafted, not random */
@@ -546,6 +553,8 @@ class CEXISlippi : public IEXIDevice
 	u16 draft_drive_frame = 0;
 	bool draft_drive_armed = false;
 	u64 draft_drive_last_ask = 0;
+	u16 draft_drive_listen = 0;
+	int draft_fetch_step = -1;   // a step the draft asked us about, so NOT ours
 
 	u32 frameSeqIdx = 0;
 
