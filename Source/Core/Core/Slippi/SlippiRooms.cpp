@@ -24,6 +24,23 @@ std::string s_access_token;
 bool s_signed_in = false;
 std::mutex s_mutex;
 
+// Where the rooms live, built in, so a player needs no config file at all.
+//
+// ⚠ The PUBLISHABLE key, and it belongs in the binary - that is what
+// publishable means. It is safe here because of how the database is built, not
+// because it is hidden: every table has RLS on with NO policies, which is
+// deny-all, so nothing reaches a table directly. Every read and write goes
+// through a SECURITY DEFINER function that checks auth.uid() and refuses when
+// there is nobody signed in.
+//
+// ⚠ A SECRET key must never end up here. If one is ever needed, it belongs
+// behind an edge function, not in a binary that ships to players.
+//
+// peppy.json still wins when it exists, which is how a test rig points itself
+// at a different project or turns lanForTesting on.
+static const char *DEFAULT_SUPABASE_URL = "https://aklpyoxkwnzcbtqjjuxk.supabase.co";
+static const char *DEFAULT_SUPABASE_KEY = "sb_publishable_PsmkI599Y7rt-Ty3jkVnbg_W_n6cq5O";
+
 std::string ConfigPath()
 {
 	return File::GetUserPath(D_CONFIG_IDX) + "peppy.json";
@@ -92,19 +109,26 @@ bool LoadConfig()
 	if (s_config.loaded)
 		return true;
 
+	// The defaults first. A player has no peppy.json and never makes one - the
+	// file used to be written by a setup script, and asking somebody to run a
+	// script before they can play is both friction and, fairly, suspicious.
+	s_config.url = DEFAULT_SUPABASE_URL;
+	s_config.key = DEFAULT_SUPABASE_KEY;
+
 	std::string text;
 	if (!File::ReadFileToString(ConfigPath(), text))
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] no peppy.json at %s", ConfigPath().c_str());
-		return false;
+		INFO_LOG(SLIPPI_ONLINE, "[Rooms] no peppy.json - using the built-in rooms");
+		s_config.loaded = true;
+		return true;
 	}
 
 	try
 	{
 		json j = json::parse(text);
 		// The names peppy.json already uses, so one file serves both builds.
-		s_config.url = j.value("supabaseUrl", "");
-		s_config.key = j.value("supabaseKey", "");
+		s_config.url = j.value("supabaseUrl", s_config.url);
+		s_config.key = j.value("supabaseKey", s_config.key);
 		s_config.name = j.value("displayName", "");
 		s_config.connect_code = j.value("connectCode", "");
 		s_config.refresh_token = j.value("refreshToken", "");
@@ -124,7 +148,8 @@ bool LoadConfig()
 
 	if (s_config.url.empty() || s_config.key.empty())
 	{
-		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] peppy.json needs supabaseUrl and supabaseKey");
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] peppy.json blanks supabaseUrl or supabaseKey. "
+		                         "Remove the file to use the built-in ones.");
 		return false;
 	}
 	if (s_config.name.empty())

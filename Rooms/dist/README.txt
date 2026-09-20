@@ -8,41 +8,41 @@ This is a beta. Read the KNOWN ISSUES at the bottom before you report anything -
 several of them are already known and being worked on.
 
 
-WHAT YOU NEED
--------------
-
-1. A REAL SLIPPI ACCOUNT - the one you already play ranked or direct with.
-   This build connects you through Slippi's own servers as an ordinary direct
-   match, so it needs a real connect code. There is no separate signup.
-
-   The game finds the account the Slippi Launcher already has and takes a copy
-   of it into this folder, by itself, the first time it starts. If you have
-   ever logged in with the Slippi Launcher there is nothing for you to do.
-
-   Nothing else on your computer is read. START.bat only launches the game;
-   setup.ps1 writes one config file inside this folder. Both are plain text
-   and short - read them.
-
-   If no account is found you can still open the menus and sit in a room, but
-   a match will NEVER start, and it does not look broken - you just wait in
-   the queue forever. Log in with the Slippi Launcher once and start it again.
-
-2. Your own Melee ISO, v1.02 (USA). Put it in this folder. Not included, and
-   nobody will send you one.
-
-
 HOW TO RUN
 ----------
 
-1. Unzip anywhere. It is portable - it does not touch your Slippi install.
-2. Put your ISO in this folder.
-3. Run START.bat. The first time it asks what name you want.
+1. Unzip anywhere.
+2. Put your Melee ISO (v1.02 USA) in this folder. Not included.
+3. Run "Slippi Dolphin.exe" and double-click Melee in the list.
 4. In Melee:  1-P Mode  ->  Online Play  ->  the row below Party.
 5. Make a room, or join one with a 4-letter code. Press START to join the queue.
+
+That is the whole setup. There is no installer, no batch file and no script -
+just the program. It is portable: settings and replays stay in this folder.
 
 The row below Party is Rooms. Its label reads "Log-in" because Melee's menu
 labels are baked-in artwork and there are only eight of them - the ninth falls
 back to the last one. Wrong word, right button.
+
+
+YOUR SLIPPI ACCOUNT
+-------------------
+
+You need one - the account you already play ranked or direct with. Two players
+in a room are introduced by Slippi's OWN servers, as an ordinary direct match,
+so a real connect code is required. There is no separate signup and nothing to
+fill in.
+
+The game takes a copy of the account the Slippi Launcher already has, the first
+time it starts, and puts it in User\Slippi\ inside this folder. Nothing else on
+your computer is read, and your Slippi install is never written to.
+
+If you have never logged in with the Slippi Launcher, do that once and start
+this again.
+
+WITHOUT AN ACCOUNT the menus and the room screen still work, but a match will
+NEVER start - and it does not look broken. You simply wait in the queue forever.
+If that is happening to you, this is why.
 
 
 HOW A ROOM WORKS
@@ -83,14 +83,16 @@ Everything below is known - please do not spend time reporting it.
 - The stage roulette playing itself in the draft is deliberate.
 
 
-WHAT IT DOES NOT TOUCH
-----------------------
+WHAT IT DOES TO YOUR COMPUTER
+-----------------------------
 
-- Portable: settings and replays stay in this folder.
+- Portable. Settings, saves and replays stay in this folder.
 - Your Slippi install and launcher are not modified. Your user.json is COPIED
-  out of the launcher, never moved or changed.
-- Your user.json is read to log you in as yourself, and goes nowhere except
-  Slippi's own servers - exactly as the normal Slippi build does.
+  out of the launcher once, never moved or changed.
+- user.json is read to log you in as yourself, and goes nowhere except Slippi's
+  own servers - exactly as the normal Slippi build does.
+- Room membership goes to this project's own database: your display name,
+  connect code and the result of each game. Nothing else.
 
 
 REPORTING

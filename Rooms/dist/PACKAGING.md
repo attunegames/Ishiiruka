@@ -38,29 +38,43 @@ So the build finds the launcher's account and copies it in itself, in
 `SlippiUser::AdoptLauncherAccount`. Precedence is in `SlippiUser::GetUserInfo`:
 a real login wins, and `peppy.json` answers only when there is none.
 
-## Why the copy is not a script, and not read in place
+## Nothing but the program ships
 
-Two separate decisions, both reversed once:
+No installer, no `START.bat`, no `setup.ps1`. A tester unzips, drops in an ISO
+and runs the exe.
 
-**Not a script.** It was a `.bat` shelling out to PowerShell with
-`-ExecutionPolicy Bypass` to copy a credential file out of `%APPDATA%`. That
-works, and it is also indistinguishable from malware at a glance - a fair thing
-for a tester to refuse to run, and the user was right to flag it. The binary is
-what they have already decided to trust, its source is public, and a Slippi
-build reading Slippi's own `user.json` is expected behaviour.
+That took two things off the scripts' hands:
 
-⚠️ Keep it that way. Any future "just add a little script that..." lands in
-the same place. The scripts that ship must touch nothing outside the folder,
-and must stay short enough that a suspicious tester can read them.
+- **The config.** `peppy.json` was written by a setup script. The Supabase URL
+  and publishable key are compiled in as defaults now (`DEFAULT_SUPABASE_URL` /
+  `DEFAULT_SUPABASE_KEY` in `SlippiRooms.cpp`), so a player never has one. The
+  file still WINS when it exists, which is how a rig points at another project
+  or turns `lanForTesting` on.
+- **The account.** `SlippiUser::AdoptLauncherAccount` copies the launcher's
+  `user.json` in on first run. The display name and connect code come from that,
+  so there is nothing to type either.
 
-**A copy, not the launcher's file in place.** Pointing `user_config_folder` at
-the launcher's directory is a few lines - `EXI_DeviceSlippi.cpp` hands that path
-to the Rust side - and it is the wrong move. The Rust side WRITES there: login,
-logout, and the refresh token with them. Two Dolphins sharing one credential
-file can rotate it out from under each other, and what the tester sees is their
-real Slippi logging itself out. That folder also holds `direct-codes.json` and
-an ISO cache, so reading in place means this build writing into somebody's real
-Slippi install - the opposite of what portable is for.
+The shipped `User/Config/Dolphin.ini` carries `ISOPath0 = .` so an ISO dropped
+in the folder just appears in the game list, and `SlippiReplayDir = .\Replays`.
+⚠️ Blank `LastFilename` before packaging - it otherwise ships the developer's
+own ISO path.
+
+⚠️ **Do not add a script back.** The first version was a `.bat` shelling out to
+PowerShell with `-ExecutionPolicy Bypass` to copy a credential file out of
+`%APPDATA%`. It worked, and it is also indistinguishable from malware at a
+glance - a fair thing for a tester to refuse to run. Whatever the next
+convenience is, it belongs in the binary, whose source is public.
+
+## Why a copy and not the launcher's file in place
+
+Pointing `user_config_folder` at the launcher's directory is a few lines -
+`EXI_DeviceSlippi.cpp` hands that path to the Rust side - and it is the wrong
+move. The Rust side WRITES there: login, logout, and the refresh token with
+them. Two Dolphins sharing one credential file can rotate it out from under each
+other, and what the tester sees is their real Slippi logging itself out. That
+folder also holds `direct-codes.json` and an ISO cache, so reading in place
+means this build writing into somebody's real Slippi install - the opposite of
+what portable is for.
 
 ## GPL
 
