@@ -466,6 +466,14 @@ class CEXISlippi : public IEXIDevice
 	SlippiMatchmaking::MatchSearchSettings lastSearch;
 	SlippiMatchmaking::MatchmakeResult recentMmResult;
 
+	// What WE last picked, remembered against ourselves rather than against a
+	// port. The draft takes its default from the previous match's block, which is
+	// indexed by port - and the port is decided fresh every pairing, so between
+	// games a player was offered whatever the OTHER one had played.
+	u8 my_last_char = 0;
+	u8 my_last_color = 0;
+	bool have_my_last = false;
+
 	std::vector<u16> stagePool;
 
 	// Used by ranked to set game prep selections

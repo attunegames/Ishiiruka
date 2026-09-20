@@ -2564,6 +2564,18 @@ void CEXISlippi::prepareOnlineMatchState()
 
 	// NOTICE_LOG(SLIPPI_ONLINE, "%d, %d", localPlayerReady, remotePlayersReady);
 
+	// Put our own last character back where the draft will look for it.
+	//
+	// ⚠️ Only while we are NOT ready - which is the draft, and exactly when this
+	// block still holds the previous game's characters. The branch below
+	// overwrites it with the real selections the moment both players have
+	// chosen, so this cannot leak into an actual match.
+	if (have_my_last && !(localPlayerReady && remotePlayersReady) && localPlayerIndex < 4)
+	{
+		onlineMatchBlock[0x60 + localPlayerIndex * 0x24] = my_last_char;
+		onlineMatchBlock[0x63 + localPlayerIndex * 0x24] = my_last_color;
+	}
+
 	if (localPlayerReady && remotePlayersReady)
 	{
 		auto isDecider = slippi_netplay->IsDecider();
@@ -2811,6 +2823,16 @@ void CEXISlippi::prepareOnlineMatchState()
 				         onlineMatchBlock[0x60 + 0x24]);
 			}
 		}
+
+		// ⚠️ Remember what WE picked, against ourselves rather than against a
+		// port. The port is decided fresh every pairing - localPlayerIndex is
+		// "isDecider ? 0 : 1" - and the draft's defaults come from this block,
+		// which is indexed by port. Confirmed from a log: a player who was port 1
+		// with Dr Mario came back as port 0 and was offered the OTHER player's
+		// Falco, because Falco was still sitting in port 0's slot.
+		my_last_char = lps.characterId;
+		my_last_color = lps.characterColor;
+		have_my_last = true;
 
 		// Set teams mode
 		onlineMatchBlock[0x8] = lastSearch.mode == SlippiMatchmaking::OnlinePlayMode::TEAMS ? 1 : 0;
