@@ -1,102 +1,49 @@
--- Rooms, part 2: who is playing, what they picked, and who won.
+-- Two holes in the rotation, both found the same evening.
 --
--- This is a PORT, not a new design. The old build reached this over twenty-two
--- migrations, and most of them were fixes for things that are not obvious until
--- three people are stood in a room - queue order that disagreed with pairing
--- order, a heartbeat that quietly moved you down the queue, a winner whose
--- place could be taken by the player they had just beaten. Rewriting it would
--- mean finding all of that again. The comments that explain WHY come across
--- with the code; that is the part worth keeping.
+-- 1. THE CHAMPION ONLY TIED WITH THE PERSON THEY BEAT.
 --
--- What changed on the way over, and why:
+--    pd_result sends a crowned winner to the back with queued_at = now(), and
+--    then sends the loser to the back with queued_at = now(). In PostgreSQL
+--    now() is the TRANSACTION's clock, not the statement's, so both writes get
+--    the identical timestamp - and joined_at, written the same way, ties too.
+--    The champion was never behind the loser, only level with them, and which
+--    of the two got picked first was arbitrary.
 --
---   searching_at is gone. The old table had it alongside queued_at because
---   queued_at arrived late, to fix a heartbeat that reset your place. Here
---   queued_at is the only queue column from the start - set when you press
---   Start, never touched by a tick - and last_seen already says whether you
---   are still here. Two columns became one and the bug they were fighting
---   cannot happen.
+--    With three people that is enough to hand the champion the very next game:
+--    the person who had been waiting goes third behind a coin flip between the
+--    two who just played. Beating everyone in the room is supposed to cost you
+--    your place, not roll for it.
 --
---   No LAN. Not a rename, a removal: this is for playing people over the
---   internet, and a LAN shortcut once cost every remote watcher a full connect
---   timeout against an address that was never theirs.
+-- 2. A 'ready' PAIRING WAS NEVER GIVEN UP ON.
 --
---   No spectate address. A watcher attaches to a player's existing netplay
---   socket, so the hole that socket already has is the only one anyone needs.
+--    pd_tick reaps a 'pending' pairing after sixty seconds, and any pairing
+--    whose players have left. Nothing reaps a pairing that reached 'ready' -
+--    both addresses published, the match on - and then never finished. A draft
+--    that deadlocks, a game that disconnects without a result, a Dolphin closed
+--    at the wrong moment: the row stays, and pd_tick will not pair either
+--    player again while it does, because it excludes anyone already in one.
 --
---   external -> addr, endpoint_at -> addr_at, to match part 1.
+--    Both players silently drop out of the rotation for as long as they stay in
+--    the room. There is no message and nothing on screen to explain it.
+
+-- ---------------------------------------------------------------------------
+-- The champion goes BEHIND the loser, not level with them.
 --
---   winner_stocks is new. The old build recorded who won but never by how much.
---
---   pd_queue_window() from part 1 is deliberately UNUSED. It exists because the
---   old build needed a separate staleness clock for "still searching"; here
---   queued_at is sticky - set on the way in, cleared only by leaving the queue
---   - and last_seen already decides whether you are still in the room at all.
---   One clock instead of two, which is what removes the class of bug where the
---   two disagreed. Left defined rather than dropped: part 1 is already applied.
+-- A second is arbitrary but it is not a race: nothing else writes queued_at in
+-- this transaction, and the only thing that reads it is an ORDER BY. What it
+-- has to beat is the loser's now(), which is the same clock reading this one
+-- started from.
+create or replace function pd_crown_offset() returns interval
+  language sql immutable as $fn$ select interval '1 second' $fn$;
 
--- ------------------------------------------------------------------ tables ---
+grant execute on function pd_crown_offset() to authenticated;
 
--- One row per arranged match. Made fresh every time, which is what stops last
--- game's picks leaking into the next one - there is nothing to clear.
-create table pd_pairings (
-  room       text        not null references pd_rooms (code) on delete cascade,
-  id         uuid        primary key default gen_random_uuid(),
-  match_id   text        not null,
+-- ---------------------------------------------------------------------------
+-- Both functions in full, because `create or replace function` takes nothing
+-- less. They are copied from Rooms/02-pairings.sql, which carries the same
+-- changes - that file stays the source of truth and this one is the migration
+-- to run against a database that already has the old pair.
 
-  host       uuid        not null,
-  guest      uuid        not null,
-
-  -- pending: arranged, nobody has an address yet.
-  -- ready:   both addresses are fresh, the match is on.
-  -- done:    over, or abandoned.
-  state      text        not null default 'pending'
-                         check (state in ('pending', 'ready', 'done')),
-
-  -- What the pair settled on, and what the top of the room draws. Null means
-  -- "has not picked yet", which the room shows as a question mark rather than
-  -- guessing - so these stay null until someone reports, on purpose.
-  --
-  -- Each player writes their OWN character; either may write the stage.
-  stage       smallint,
-  char_host   smallint,
-  color_host  smallint,
-  char_guest  smallint,
-  color_guest smallint,
-
-  winner        uuid,
-  winner_stocks smallint,   -- stocks left on the winner, from the game end
-
-  created_at timestamptz not null default now(),
-  ended_at   timestamptz
-);
-
-create index pd_pairings_open on pd_pairings (room, state)
-  where state in ('pending', 'ready');
-
--- Who each player has beaten in this room, for crowns. A run ends when you
--- lose, which is a delete rather than a flag.
-create table pd_beaten (
-  room      text not null references pd_rooms (code) on delete cascade,
-  player    uuid not null,
-  opponent  uuid not null,
-  beaten_at timestamptz not null default now(),
-  primary key (room, player, opponent)
-);
-
-alter table pd_pairings enable row level security;
-alter table pd_beaten   enable row level security;
--- No policies, deliberately, exactly as part 1: everything goes through these
--- functions and nothing reads the tables directly.
-
--- -------------------------------------------------------------------- tick ---
-
--- Called by Dolphin every couple of seconds while it is in a room. One round
--- trip does everything: says we are still here, publishes our address, reports
--- what we picked, arranges a match if one is due, and hands back the whole room.
---
--- Everything is under an advisory lock on the room. Two clients ticking at the
--- same instant would otherwise each see no open pairing and each make one.
 create or replace function pd_tick(
   p_room          text,
   p_name          text,
@@ -401,15 +348,6 @@ begin
   )::jsonb)::json;
 end $$;
 
-grant execute on function pd_tick(text, text, text, text, boolean, boolean,
-                                  text, boolean, smallint, smallint, smallint)
-  to authenticated;
-
--- ------------------------------------------------------------------ result ---
-
--- Reported by either player when the match ends. Whoever gets here first
--- settles it; the other one is told it is already recorded rather than being
--- treated as an error, because both of them will call this.
 create or replace function pd_result(
   p_room     text,
   p_match_id text,
@@ -528,4 +466,7 @@ begin
     'others', v_others);
 end $$;
 
+grant execute on function pd_tick(text, text, text, text, boolean, boolean,
+                                  text, boolean, smallint, smallint, smallint)
+  to authenticated;
 grant execute on function pd_result(text, text, boolean, smallint) to authenticated;

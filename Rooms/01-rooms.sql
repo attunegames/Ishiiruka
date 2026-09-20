@@ -25,6 +25,16 @@
 create or replace function pd_presence_window() returns interval
   language sql immutable as $fn$ select interval '20 seconds' $fn$;
 
+-- How far BEHIND the person they just beat a crowned champion goes.
+--
+-- ⚠️ It cannot be zero. pd_result sends the champion to the back and then sends
+-- the loser to the back, and now() in PostgreSQL is the TRANSACTION's clock -
+-- so both writes land on the identical timestamp and the champion only ties
+-- with the person they beat. Beating everyone in the room has to cost you your
+-- place, not roll for it.
+create or replace function pd_crown_offset() returns interval
+  language sql immutable as $fn$ select interval '1 second' $fn$;
+
 -- Deliberately much longer than presence: you press Start once and then watch a
 -- whole match go by, and that must not drop you out of the queue.
 create or replace function pd_queue_window() returns interval
@@ -323,6 +333,7 @@ end $fn$;
 -- anywhere, which is what keeps the publishable key harmless.
 
 grant execute on function pd_presence_window()                  to authenticated;
+grant execute on function pd_crown_offset()                     to authenticated;
 grant execute on function pd_queue_window()                     to authenticated;
 grant execute on function pd_address_window()                   to authenticated;
 grant execute on function pd_room_create(text, boolean, text, text) to authenticated;
