@@ -35,6 +35,11 @@ $exclude = @(
     'User\\Logs\\',
     '^Replays\\',
     '\.peppy-bak$',
+    # Rig-side spares: .known-good copies of the codeset, .bak modules. Harmless
+    # but confusing in a tester's folder, and one of them being loaded instead of
+    # the real file is exactly the kind of thing nobody would think to check.
+    '\.known-good$',
+    '\.bak$',
     'User\\ishiiruka',
     '^setup\.ps1$',
     '^START\.bat$',
