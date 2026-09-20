@@ -36,6 +36,29 @@
 #define ROOM_STATE_MAX_QUEUE 6
 #define ROOM_STATE_MAX_LOBBY 6
 #define ROOM_STATE_NAMES (2 + ROOM_STATE_MAX_QUEUE + ROOM_STATE_MAX_LOBBY)
+/* Which PORT bans first in the draft, in a byte the header already had spare.
+ *
+ * Melee's counterpick rule is that the winner bans, and GPDO_PREV_WINNER is the
+ * byte the draft reads it from - proved by forcing it and watching the ban move
+ * to the other player. A room zeroes its whole GamePrepData, so port 0 banned
+ * every time and whoever made the room watched their opponent ban.
+ *
+ * In a room the winner is the one who STAYED, which is the same person the
+ * pairing calls its host: pd_pairings picks its host as the first still in the
+ * queue, tie-broken by who joined the room first. For a first game, and for one
+ * whose winner has left, that falls through to the longest-standing member. */
+#define ROOM_STATE_BAN_FIRST 0x09
+
+/* The room's own settings, in the next byte the header had spare.
+ *
+ * ⚠ Two things, not one: whether the room drafts its stages, and whether the
+ * player reading this is the one allowed to change that. The screen needs both
+ * - everybody sees the setting, one person gets told they can press a button -
+ * and the owner can change hands while people are standing in the room. */
+#define ROOM_STATE_SETTINGS 0x0A
+#define ROOM_SETTING_DRAFT  0x01   /* stages are drafted, not random */
+#define ROOM_SETTING_OWNER  0x02   /* ...and you are the one who may say so */
+
 #define ROOM_STATE_HEADER 12
 #define ROOM_STATE_NAMES_END (ROOM_STATE_HEADER + ROOM_STATE_NAMES * ROOM_STATE_NAME_LEN)
 
@@ -206,6 +229,7 @@ class CEXISlippi : public IEXIDevice
 		// holds the room state, and with it both players' addresses.
 		CMD_ROOM_WATCH = 0xCB,
 		CMD_ROOM_LEAVE = 0xCC,  // hold B: out of the room altogether
+		CMD_ROOM_STAGE_DRAFT = 0xCD, // the owner turning the stage draft on or off
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -305,6 +329,7 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_ROOM_LIST_READ, 0x0},
 	    {CMD_ROOM_WATCH, 0x0},
 	    {CMD_ROOM_LEAVE, 0x1},        // one byte: were we IN a room, or just browsing
+	    {CMD_ROOM_STAGE_DRAFT, 0x1},  // one byte: the setting we want
 
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
@@ -407,6 +432,7 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomJoin(u8 *payload);
 	void handleRoomWatch();
 	void handleRoomLeave(u8 *payload);
+	void handleRoomStageDraft(u8 *payload);
 
 	// True once a watch is up and has enough to show. Everything a watcher does
 	// differently is gated on this, so a player's match takes exactly the paths

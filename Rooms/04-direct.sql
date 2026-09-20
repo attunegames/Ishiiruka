@@ -289,6 +289,11 @@ begin
   v_base := json_build_object(
     'room', p_room, 'active', v_active, 'queue', v_queue, 'lobby', v_lobby,
     'position', v_position, 'draft', v_draft,
+    -- Whether this room drafts its stages, and whether YOU are the one who may
+    -- say so. Both ride the tick because both are on the room screen, and the
+    -- owner can change hands while people are standing in it - see part 5.
+    'stageDraft', (select r.stage_draft from pd_rooms r where r.code = p_room),
+    'isOwner',    (select r.owner = v_me from pd_rooms r where r.code = p_room),
     'live', coalesce(v_show.state = 'ready', false));
 
   -- Anyone in the room trying to watch, so the pair can punch a hole out to

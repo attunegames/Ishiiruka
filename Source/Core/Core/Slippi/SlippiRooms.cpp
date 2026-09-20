@@ -475,6 +475,8 @@ void ReadReply(const json &j, Rooms::State &s)
 	// ⚠ Null whenever there is no pairing, which is most of the time.
 	s.match_id = Str(j, "matchId");
 	s.is_host = j.value("isHost", false);
+	s.stage_draft = j.value("stageDraft", false);
+	s.is_owner = j.value("isOwner", false);
 	s.position = j.value("position", 0);
 	s.active = ReadRoster(j, "active");
 	s.ready = s.state == "ready";
@@ -763,6 +765,32 @@ void ReportPick(int character, int color, int stage)
 	}
 	if (stage != Draft::NOT_PICKED)
 		s_pick_stage.store(stage);
+}
+
+// The owner turning the stage draft on or off.
+//
+// ⚠ Fire and forget, on its own thread, like every other room RPC - the room
+// screen must not stall waiting for a round trip. Nothing is written into the
+// local state here either: the next tick brings the setting back, so the screen
+// only ever shows what the server actually agreed to. A player who is not the
+// owner changes nothing and their screen simply does not move.
+void SetStageDraft(bool on)
+{
+	std::string room;
+	{
+		std::lock_guard<std::mutex> lock(s_state_lock);
+		room = s_room;
+	}
+	if (room.empty())
+		return;
+
+	std::thread([room, on]() {
+		json args{{"p_room", room}, {"p_on", on}};
+		std::string reply = Rpc("pd_set_stage_draft", args.dump());
+		if (reply.empty())
+			return; // Rpc already said why.
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] stage draft: %s", reply.c_str());
+	}).detach();
 }
 
 void ReportResult(const std::string &match_id, bool i_won, int winner_stocks)

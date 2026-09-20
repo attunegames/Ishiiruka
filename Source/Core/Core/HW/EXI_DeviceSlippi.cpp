@@ -2797,33 +2797,6 @@ void CEXISlippi::prepareOnlineMatchState()
 			count += 1;
 		}
 
-		// EXPERIMENT. Which port Dolphin thinks we are, and what characters the
-		// match block holds - the two things that decide whether the draft's
-		// "YOUR CHAR" can be trusted between games.
-		//
-		// The draft screen is GameSetup.dat, a shipped binary with no source here,
-		// so where it reads its defaults from cannot be read - only inferred. If
-		// this index FLIPS between games of a set, that is the whole explanation:
-		// the previous characters are stored by port and the ports swapped.
-		//
-		// Logged on CHANGE, not per frame - this runs every frame there is a match
-		// state to prepare.
-		{
-			static int said_idx = -1;
-			static int said_chars = -1;
-			const int chars = onlineMatchBlock[0x60] | (onlineMatchBlock[0x60 + 0x24] << 8);
-
-			if (localPlayerIndex != said_idx || chars != said_chars)
-			{
-				said_idx = localPlayerIndex;
-				said_chars = chars;
-				WARN_LOG(SLIPPI_ONLINE,
-				         "[Rooms] match state: I am port %d, block holds p0=%d p1=%d",
-				         localPlayerIndex, onlineMatchBlock[0x60],
-				         onlineMatchBlock[0x60 + 0x24]);
-			}
-		}
-
 		// ⚠️ Remember what WE picked, against ourselves rather than against a
 		// port. The port is decided fresh every pairing - localPlayerIndex is
 		// "isDecider ? 0 : 1" - and the draft's defaults come from this block,
@@ -3185,6 +3158,20 @@ void CEXISlippi::handleRoomLeave(u8 *payload)
 	Rooms::Leave();
 }
 
+// Rooms: the owner turning the stage draft on or off.
+//
+// ⚠ Not checked here. The server decides who may change this - pd_set_stage_draft
+// updates nothing unless the caller owns the room - because a client that has
+// been told "you are the owner" is still a client, and the room screen only
+// hides the prompt rather than enforcing anything.
+void CEXISlippi::handleRoomStageDraft(u8 *payload)
+{
+	bool on = payload[0] != 0;
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] asking for the stage draft to be %s",
+	         on ? "on" : "off");
+	Rooms::SetStageDraft(on);
+}
+
 // Rooms: join a room by code.
 //
 // Starts the heartbeat, which is what actually puts a member row in the room -
@@ -3444,8 +3431,26 @@ void CEXISlippi::prepareRoomState()
 	m_read_queue.push_back(pick(s.draft.guest_char));
 	m_read_queue.push_back((u8)s.draft.guest_color);
 	m_read_queue.push_back(pick(s.draft.stage));
-	m_read_queue.push_back(0);
-	m_read_queue.push_back(0);
+
+	// ROOM_STATE_BAN_FIRST. ⚠️ The PORT, not a yes/no, because the draft is
+	// indexed by port and the port is decided fresh every pairing - both sides
+	// work this out for themselves and arrive at the same answer, because
+	// exactly one of them is the pairing's host.
+	u8 ban_first = 0;
+	if (slippi_netplay)
+	{
+		u8 local_port = slippi_netplay->IsDecider() ? 0 : 1;
+		ban_first = s.is_host ? local_port : (u8)(1 - local_port);
+	}
+	m_read_queue.push_back(ban_first);
+
+	// ROOM_STATE_SETTINGS
+	u8 settings = 0;
+	if (s.stage_draft)
+		settings |= ROOM_SETTING_DRAFT;
+	if (s.is_owner)
+		settings |= ROOM_SETTING_OWNER;
+	m_read_queue.push_back(settings);
 	m_read_queue.push_back(0);
 
 	// Names, in a fixed order so the module can index rather than parse: the
@@ -4273,6 +4278,9 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_ROOM_QUEUE:
 			handleRoomQueue(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_STAGE_DRAFT:
+			handleRoomStageDraft(&memPtr[bufLoc + 1]);
 			break;
 		case CMD_ROOM_LEAVE:
 			handleRoomLeave(&memPtr[bufLoc + 1]);

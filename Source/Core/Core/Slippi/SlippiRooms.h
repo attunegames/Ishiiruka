@@ -137,6 +137,15 @@ struct State
 	std::string match_id;
 	bool is_host = false;
 
+	// Whether this room drafts its stages, and whether WE are the one allowed
+	// to say so. A room is random by default - see Rooms/07-stage-draft.sql for
+	// why that is the honest default rather than a button on the draft screen.
+	//
+	// ⚠ The owner can change hands while people are standing in the room, so
+	// this rides every tick rather than being asked once.
+	bool stage_draft = false;
+	bool is_owner = false;
+
 	// Who we are matched against, and their connect code - which is the whole
 	// handoff: each side asks Slippi for a DIRECT match against the other's
 	// code and Slippi makes the introduction it already makes for every direct
@@ -212,6 +221,10 @@ void SetQueued(bool queued);
  * whatever the field has always claimed. This survives the game module being
  * reloaded, which a local flag over there does not. */
 bool Queued();
+
+// The owner turning the stage draft on or off. The server decides whether the
+// caller may - see pd_set_stage_draft - and the answer comes back on the tick.
+void SetStageDraft(bool on);
 
 // What we picked, reported on the next tick. Each client may only report its
 // OWN character; either of the two may report the stage.
