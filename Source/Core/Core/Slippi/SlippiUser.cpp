@@ -123,8 +123,13 @@ SlippiUser::~SlippiUser() {}
 static void AdoptLauncherAccount()
 {
 #ifdef _WIN32
-	std::string dir = File::GetSlippiUserConfigFolder();
-	std::string dest = dir + DIR_SEP "user.json";
+	// ⚠️ Dolphin's own path indices, not a path built here. F_USERJSON_IDX IS
+	// user.json, and D_SLIPPI_IDX already carries its trailing separator - the
+	// first version of this pasted DIR_SEP in between and did not compile,
+	// because that macro lives in CommonPaths.h and this file does not include
+	// it. Asking for the index cannot drift from wherever Slippi really looks.
+	std::string dir = File::GetUserPath(D_SLIPPI_IDX);
+	std::string dest = File::GetUserPath(F_USERJSON_IDX);
 	if (File::Exists(dest))
 		return;
 
@@ -144,7 +149,7 @@ static void AdoptLauncherAccount()
 		std::string src = std::string(appdata) + r;
 		if (!File::Exists(src))
 			continue;
-		File::CreateFullPath(dir + DIR_SEP);
+		File::CreateFullPath(dir);
 		if (File::Copy(src, dest))
 			WARN_LOG(SLIPPI_ONLINE, "[Rooms] copied the Slippi account from %s", src.c_str());
 		else
