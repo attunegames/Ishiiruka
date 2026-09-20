@@ -72,6 +72,14 @@
 
 #define ROOM_STATE_SETTINGS 0x0A
 #define ROOM_SETTING_DRAFT  0x01   /* stages are drafted, not random */
+
+/* ROOM_STATE_MM: what Slippi's matchmaking is doing about the pairing the
+ * room asked it for. ⚠️ The room used to have no way to ask. It sent
+ * CMD_FIND_OPPONENT and then waited for ROOM_FLAG_CONNECTED, which only ever
+ * arrives on success - so a search that failed left the screen sitting on a
+ * pairing forever with nothing said and nothing to do. */
+#define ROOM_MM_FAILED    0x01   /* Slippi gave up on this search */
+#define ROOM_MM_SEARCHING 0x02   /* still trying */
 #define ROOM_SETTING_OWNER  0x02   /* ...and you are the one who may say so */
 
 #define ROOM_STATE_HEADER 12

@@ -3571,7 +3571,23 @@ void CEXISlippi::prepareRoomState()
 	if (s.is_owner)
 		settings |= ROOM_SETTING_OWNER;
 	m_read_queue.push_back(settings);
-	m_read_queue.push_back(0);
+
+	// ROOM_STATE_MM. This byte used to be padding, and the room was blind
+	// without it: CMD_FIND_OPPONENT goes out, and the only thing that ever
+	// comes back is ROOM_FLAG_CONNECTED on success. A search that errors says
+	// nothing at all, so the screen waits on a pairing that is already dead.
+	u8 mm = 0;
+	if (matchmaking)
+	{
+		auto mm_state = matchmaking->GetMatchmakeState();
+		if (mm_state == SlippiMatchmaking::ERROR_ENCOUNTERED)
+			mm |= ROOM_MM_FAILED;
+		else if (mm_state == SlippiMatchmaking::INITIALIZING ||
+		         mm_state == SlippiMatchmaking::MATCHMAKING ||
+		         mm_state == SlippiMatchmaking::OPPONENT_CONNECTING)
+			mm |= ROOM_MM_SEARCHING;
+	}
+	m_read_queue.push_back(mm);
 
 	// Names, in a fixed order so the module can index rather than parse: the
 	// two playing, then the queue, then the lobby. Missing entries are blank
