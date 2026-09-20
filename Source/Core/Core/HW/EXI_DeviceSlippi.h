@@ -55,6 +55,13 @@
  * player reading this is the one allowed to change that. The screen needs both
  * - everybody sees the setting, one person gets told they can press a button -
  * and the owner can change hands while people are standing in the room. */
+/* What the pad should do in a random-stage room's draft. One byte, asked once a
+ * frame; the frame counting is Dolphin's so the game side keeps no state. */
+#define ROOM_DRIVE_NOTHING 0
+#define ROOM_DRIVE_SWEEP   1   /* hold the cursor moving along the stage row */
+#define ROOM_DRIVE_PRESS   2   /* press A */
+#define ROOM_DRIVE_PRESS_FRAMES 3
+
 #define ROOM_STATE_SETTINGS 0x0A
 #define ROOM_SETTING_DRAFT  0x01   /* stages are drafted, not random */
 #define ROOM_SETTING_OWNER  0x02   /* ...and you are the one who may say so */
@@ -230,6 +237,7 @@ class CEXISlippi : public IEXIDevice
 		CMD_ROOM_WATCH = 0xCB,
 		CMD_ROOM_LEAVE = 0xCC,  // hold B: out of the room altogether
 		CMD_ROOM_STAGE_DRAFT = 0xCD, // the owner turning the stage draft on or off
+		CMD_ROOM_DRAFT_DRIVE = 0xCE, // read back: what the pad should do in the draft
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -330,6 +338,7 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_ROOM_WATCH, 0x0},
 	    {CMD_ROOM_LEAVE, 0x1},        // one byte: were we IN a room, or just browsing
 	    {CMD_ROOM_STAGE_DRAFT, 0x1},  // one byte: the setting we want
+	    {CMD_ROOM_DRAFT_DRIVE, 0x0},  // no payload - the answer is one byte
 
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
@@ -433,6 +442,7 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomWatch();
 	void handleRoomLeave(u8 *payload);
 	void handleRoomStageDraft(u8 *payload);
+	void prepareRoomDraftDrive();
 
 	// True once a watch is up and has enough to show. Everything a watcher does
 	// differently is gated on this, so a player's match takes exactly the paths
@@ -504,6 +514,21 @@ class CEXISlippi : public IEXIDevice
 
 	// Used by ranked to set game prep selections
 	std::vector<SlippiPlayerSelections> overwrite_selections;
+
+	// Rooms: driving the draft's stage half when the room does not draft stages.
+	//
+	// The draft asks its two stage questions as steps 0 and 1 - a ban then a pick,
+	// one player each - and only asks its own player. So they cannot be skipped
+	// from here; they have to be ANSWERED, by moving the cursor and pressing A.
+	//
+	// ⚠ Every edge is a message, not a timer. The draft completes a step through
+	// CMD_GP_COMPLETE_STEP and reads the other side's through CMD_GP_FETCH_STEP,
+	// so Dolphin sees the whole negotiation and can say exactly when to start and
+	// when to stop. See prepareRoomDraftDrive.
+	int draft_last_local_step = -1;
+	u8 draft_drive_hold = 0;
+	u16 draft_drive_frame = 0;
+	bool draft_drive_armed = false;
 
 	u32 frameSeqIdx = 0;
 

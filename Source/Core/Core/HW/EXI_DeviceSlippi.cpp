@@ -3164,6 +3164,94 @@ void CEXISlippi::handleRoomLeave(u8 *payload)
 // updates nothing unless the caller owns the room - because a client that has
 // been told "you are the owner" is still a client, and the room screen only
 // hides the prompt rather than enforcing anything.
+// Rooms: what the pad should do in the draft this frame.
+//
+// A room whose stages are random still goes through the draft, because that is
+// where characters are chosen. Only its stage half - steps 0 and 1, a ban then a
+// pick - has to answer itself, and the draft only ever asks its OWN player for a
+// step, so those cannot be skipped from here. They get answered: move the cursor
+// a random way along, press A once.
+//
+// ⚠ Started and stopped by MESSAGES, never by a timer:
+//   * step 0's actor is the player who bans first, which both clients already
+//     work out the same way - see ROOM_STATE_BAN_FIRST.
+//   * step 1's actor waits until the opponent's step 0 has actually arrived.
+//   * either stops the moment its own step completes.
+//
+// Two bytes back: whether to drive, and how far along to sweep before pressing.
+// The distance is rolled ONCE per step here rather than in the ASM, which has no
+// random number to hand and no memory between frames worth trusting.
+void CEXISlippi::prepareRoomDraftDrive()
+{
+	m_read_queue.clear();
+
+	u8 drive = 0;
+
+	Rooms::State rs = Rooms::Latest();
+	bool random_stages = Rooms::InRoom() && !rs.stage_draft;
+
+	if (random_stages && slippi_netplay && !isWatching())
+	{
+		u8 local_port = slippi_netplay->IsDecider() ? 0 : 1;
+		u8 ban_first = rs.is_host ? local_port : (u8)(1 - local_port);
+		bool i_ban_first = (ban_first == local_port);
+
+		// The one step this client answers: the first player takes the ban, the
+		// second takes the pick. Nothing past step 1 is ever driven - steps 2
+		// and 3 are the characters and belong to the player.
+		int my_step = i_ban_first ? 0 : 1;
+
+		bool already_done = draft_last_local_step >= my_step;
+		bool my_turn = false;
+		if (!already_done)
+		{
+			if (my_step == 0)
+			{
+				my_turn = true; // nothing to wait for
+			}
+			else
+			{
+				// Only once the ban has actually come back from the opponent.
+				SlippiGamePrepStepResults res;
+				my_turn = slippi_netplay->GetGamePrepResults(0, res);
+			}
+		}
+
+		if (my_turn)
+		{
+			if (!draft_drive_armed)
+			{
+				draft_drive_armed = true;
+				draft_drive_frame = 0;
+				// How far to sweep the cursor before pressing, so it is not the
+				// same stage every single match. Rolled ONCE per step, here,
+				// because the ASM has no random number to hand.
+				draft_drive_hold = (u8)(12 + (generator() % 36));
+				WARN_LOG(SLIPPI_ONLINE, "[Rooms] driving draft step %d, sweep %d",
+				         my_step, draft_drive_hold);
+			}
+
+			// ⚠ The FRAME COUNT lives here, not in the ASM. This is asked once
+			// a frame, so counting the asks is counting the frames, and it keeps
+			// the game side to "read a byte, set a button" with no memory of its
+			// own to get out of step.
+			if (draft_drive_frame < draft_drive_hold)
+				drive = ROOM_DRIVE_SWEEP;
+			else if (draft_drive_frame < draft_drive_hold + ROOM_DRIVE_PRESS_FRAMES)
+				drive = ROOM_DRIVE_PRESS;
+			else
+				drive = ROOM_DRIVE_NOTHING; // pressed; waiting for the step to land
+
+			draft_drive_frame++;
+		}
+	}
+
+	if (!draft_drive_armed)
+		draft_drive_frame = 0;
+
+	m_read_queue.push_back(drive);
+}
+
 void CEXISlippi::handleRoomStageDraft(u8 *payload)
 {
 	bool on = payload[0] != 0;
@@ -4029,6 +4117,11 @@ void CEXISlippi::handleGamePrepStepComplete(const SlippiExiTypes::GpCompleteStep
 	         query.step_idx, query.char_selection, query.char_color_selection,
 	         query.stage_selections[0], query.stage_selections[1]);
 
+	// Our own step landed, so whatever was driving the pad for it stops. This is
+	// the "when to stop" that a timer could never get right.
+	draft_last_local_step = query.step_idx;
+	draft_drive_armed = false;
+
 	// ⚠️ A watcher has no business in somebody else's draft. It should never
 	// reach this screen - the room sends it straight to the splash - but its
 	// netplay client points at the two people it is watching, so if it ever did,
@@ -4306,6 +4399,9 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_ROOM_STAGE_DRAFT:
 			handleRoomStageDraft(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_DRAFT_DRIVE:
+			prepareRoomDraftDrive();
 			break;
 		case CMD_ROOM_LEAVE:
 			handleRoomLeave(&memPtr[bufLoc + 1]);
