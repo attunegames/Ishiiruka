@@ -4017,6 +4017,18 @@ void CEXISlippi::handleGamePrepStepComplete(const SlippiExiTypes::GpCompleteStep
 	res.char_color_selection = query.char_color_selection;
 	memcpy(res.stage_selections, query.stage_selections, 2);
 
+	// DIAGNOSTIC. Which step is which.
+	//
+	// The draft negotiates through here - it completes a step and fetches the
+	// opponent's - so every ban, every stage and every character passes this
+	// point with an index on it. What that index MEANS is the one thing needed
+	// before a random-stage room can tell the draft to skip its stage steps,
+	// and it is not written down anywhere. So it gets read off a real draft
+	// rather than assumed, which is what went wrong twice already.
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] draft step %d done: char %d colour %d stages %d,%d",
+	         query.step_idx, query.char_selection, query.char_color_selection,
+	         query.stage_selections[0], query.stage_selections[1]);
+
 	// ⚠️ A watcher has no business in somebody else's draft. It should never
 	// reach this screen - the room sends it straight to the splash - but its
 	// netplay client points at the two people it is watching, so if it ever did,
@@ -4058,6 +4070,19 @@ void CEXISlippi::prepareGamePrepOppStep(const SlippiExiTypes::GpFetchStepQuery &
 		resp.char_selection = res.char_selection;
 		resp.char_color_selection = res.char_color_selection;
 		memcpy(resp.stage_selections, res.stage_selections, 2);
+
+		// DIAGNOSTIC, and ONCE PER STEP rather than per call - the draft asks
+		// this every frame until an answer arrives, so logging every call would
+		// bury the thing being looked for.
+		static int said_step = -1;
+		if (query.step_idx != said_step)
+		{
+			said_step = query.step_idx;
+			WARN_LOG(SLIPPI_ONLINE,
+			         "[Rooms] draft step %d from opponent: char %d colour %d stages %d,%d",
+			         query.step_idx, res.char_selection, res.char_color_selection,
+			         res.stage_selections[0], res.stage_selections[1]);
+		}
 	}
 #endif
 
