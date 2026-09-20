@@ -2785,6 +2785,33 @@ void CEXISlippi::prepareOnlineMatchState()
 			count += 1;
 		}
 
+		// EXPERIMENT. Which port Dolphin thinks we are, and what characters the
+		// match block holds - the two things that decide whether the draft's
+		// "YOUR CHAR" can be trusted between games.
+		//
+		// The draft screen is GameSetup.dat, a shipped binary with no source here,
+		// so where it reads its defaults from cannot be read - only inferred. If
+		// this index FLIPS between games of a set, that is the whole explanation:
+		// the previous characters are stored by port and the ports swapped.
+		//
+		// Logged on CHANGE, not per frame - this runs every frame there is a match
+		// state to prepare.
+		{
+			static int said_idx = -1;
+			static int said_chars = -1;
+			const int chars = onlineMatchBlock[0x60] | (onlineMatchBlock[0x60 + 0x24] << 8);
+
+			if (localPlayerIndex != said_idx || chars != said_chars)
+			{
+				said_idx = localPlayerIndex;
+				said_chars = chars;
+				WARN_LOG(SLIPPI_ONLINE,
+				         "[Rooms] match state: I am port %d, block holds p0=%d p1=%d",
+				         localPlayerIndex, onlineMatchBlock[0x60],
+				         onlineMatchBlock[0x60 + 0x24]);
+			}
+		}
+
 		// Set teams mode
 		onlineMatchBlock[0x8] = lastSearch.mode == SlippiMatchmaking::OnlinePlayMode::TEAMS ? 1 : 0;
 		// onlineMatchBlock[0x8] = remotePlayerCount >= 2 ? 1 : 0; // TODO: If we dont set it to teams, it crashes
