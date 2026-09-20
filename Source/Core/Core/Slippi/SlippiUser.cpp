@@ -101,8 +101,66 @@ SlippiUser::SlippiUser(uintptr_t rs_exi_device_ptr)
 
 SlippiUser::~SlippiUser() {}
 
+// Take a copy of the Slippi account the launcher already has, if this folder
+// has none of its own.
+//
+// ⚠ IN HERE rather than in a script beside the exe. It was a .bat shelling
+// out to PowerShell with -ExecutionPolicy Bypass to copy a credential file out
+// of AppData, which is indistinguishable from malware at a glance and a fair
+// thing for a tester to refuse to run. This binary is the thing they already
+// chose to trust, its source is public, and a Slippi build reading Slippi's own
+// user.json is what anyone would expect it to do.
+//
+// ⚠ A COPY, not the launcher's file read in place. The Rust side WRITES to
+// it - login, logout, and the refresh token with them - so two Dolphins sharing
+// one credential file can rotate it out from under each other, and the failure a
+// tester would see is their real Slippi logging itself out. That folder also
+// holds direct-codes.json and an ISO cache, which this build has no business
+// writing into.
+//
+// Only when we have none. An existing copy is left alone, so a token refreshed
+// here is never replaced by an older one from the launcher.
+static void AdoptLauncherAccount()
+{
+#ifdef _WIN32
+	std::string dir = File::GetSlippiUserConfigFolder();
+	std::string dest = dir + DIR_SEP "user.json";
+	if (File::Exists(dest))
+		return;
+
+	const char *appdata = getenv("APPDATA");
+	if (!appdata)
+		return;
+
+	// The current layout first, then two older ones some installs still have.
+	const char *rel[] = {
+	    "\\Slippi Launcher\\netplay\\User\\Slippi\\user.json",
+	    "\\Slippi Launcher\\playback\\User\\Slippi\\user.json",
+	    "\\Slippi Desktop App\\dolphin\\User\\Slippi\\user.json",
+	};
+
+	for (const char *r : rel)
+	{
+		std::string src = std::string(appdata) + r;
+		if (!File::Exists(src))
+			continue;
+		File::CreateFullPath(dir + DIR_SEP);
+		if (File::Copy(src, dest))
+			WARN_LOG(SLIPPI_ONLINE, "[Rooms] copied the Slippi account from %s", src.c_str());
+		else
+			WARN_LOG(SLIPPI_ONLINE, "[Rooms] could NOT copy the Slippi account from %s", src.c_str());
+		return;
+	}
+
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] no Slippi account here and none in the launcher - "
+	                        "a match cannot start until one is logged in");
+#endif
+}
+
 bool SlippiUser::AttemptLogin()
 {
+	AdoptLauncherAccount();
+
 	// The REAL login first, and that ordering is the whole change.
 	//
 	// This used to answer from peppy.json and never open user.json at all,

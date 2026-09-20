@@ -15,18 +15,17 @@ WHAT YOU NEED
    This build connects you through Slippi's own servers as an ordinary direct
    match, so it needs a real connect code. There is no separate signup.
 
-   START.bat finds your account and copies it in by itself. If you have ever
-   logged in with the Slippi Launcher, there is nothing for you to do.
+   The game finds the account the Slippi Launcher already has and takes a copy
+   of it into this folder, by itself, the first time it starts. If you have
+   ever logged in with the Slippi Launcher there is nothing for you to do.
 
-   If it cannot find one, it says so in a yellow box you cannot miss. Do not
-   ignore that. You can still open the menus and sit in a room, but a match
-   will NEVER start - and it does not look broken, you simply wait in the
-   queue forever. Fix it by logging in with the Slippi Launcher once and
-   running START.bat again, or copy the file yourself from
+   Nothing else on your computer is read. START.bat only launches the game;
+   setup.ps1 writes one config file inside this folder. Both are plain text
+   and short - read them.
 
-       %APPDATA%\Slippi Launcher\netplay\User\Slippi\user.json
-
-   into   <this folder>\User\Slippi\
+   If no account is found you can still open the menus and sit in a room, but
+   a match will NEVER start, and it does not look broken - you just wait in
+   the queue forever. Log in with the Slippi Launcher once and start it again.
 
 2. Your own Melee ISO, v1.02 (USA). Put it in this folder. Not included, and
    nobody will send you one.

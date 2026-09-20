@@ -1,12 +1,14 @@
 @echo off
 REM Peppy Dolphin - Melee netplay with its own rooms.
 REM
-REM Portable: settings and replays stay in this folder. Your Slippi install is
-REM read, never written - see refresh-account.ps1.
+REM This batch file only launches the game. The one-time setup below writes a
+REM single config file inside this folder and reads nothing else on your
+REM computer - see setup.ps1, which is plain text and short.
 REM
 REM You DO need a real Slippi account: two players in a room are introduced by
 REM Slippi's own servers as a direct match, so a real connect code is required.
-REM Your account is found and copied in automatically.
+REM The game finds the account the Slippi Launcher already has and copies it in
+REM by itself.
 REM
 REM Put your Melee ISO (v1.02) in this folder and it boots straight in.
 REM Otherwise Dolphin opens and you point it at your ISO once.
@@ -27,11 +29,6 @@ if not exist "User\Config\peppy.json" (
   pause
   exit /b 1
 )
-
-REM Take a fresh copy of the Slippi account if the launcher's is newer. Quiet,
-REM every launch, so logging in again or a rotated token is picked up without
-REM anybody having to know that is a thing.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0refresh-account.ps1"
 
 for %%f in (*.iso) do (
   start "" "Slippi Dolphin.exe" -e "%%~ff"
