@@ -537,6 +537,7 @@ class CEXISlippi : public IEXIDevice
 	u8 draft_drive_hold = 0;
 	u16 draft_drive_frame = 0;
 	bool draft_drive_armed = false;
+	u64 draft_drive_last_ask = 0;
 
 	u32 frameSeqIdx = 0;
 

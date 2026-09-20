@@ -3189,6 +3189,23 @@ void CEXISlippi::prepareRoomDraftDrive()
 
 	u8 drive = 0;
 
+	// ⚠ A NEW DRAFT WIPES WHAT THE LAST ONE DID. draft_last_local_step is
+	// "my step has landed, stop driving", and it was only ever set - so the first
+	// draft of a room worked and every draft after it thought its step was
+	// already done and drove nothing. Random stages worked once per room.
+	//
+	// The draft scene is the only thing that asks this question, every frame
+	// while it is up, so a GAP in the asking is the draft ending. Half a second
+	// is far longer than a frame and far shorter than a match.
+	u64 now = Common::Timer::GetTimeMs();
+	if (now - draft_drive_last_ask > 500)
+	{
+		draft_last_local_step = -1;
+		draft_drive_armed = false;
+		draft_drive_frame = 0;
+	}
+	draft_drive_last_ask = now;
+
 	Rooms::State rs = Rooms::Latest();
 	bool random_stages = Rooms::InRoom() && !rs.stage_draft;
 
