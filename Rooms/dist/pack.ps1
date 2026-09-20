@@ -40,6 +40,11 @@ $exclude = @(
     # the real file is exactly the kind of thing nobody would think to check.
     '\.known-good$',
     '\.bak$',
+    # ⚠️ And the asset backups, which are worse than clutter. The loader prefers
+    # a WHOLE MnMaAll.usd over its .diff patch, so a stray whole file silently
+    # beats the patch that carries the Rooms menu artwork. 2.4 MB of them were
+    # riding along in the first zip.
+    '-backup$',
     'User\\ishiiruka',
     '^setup\.ps1$',
     '^START\.bat$',
