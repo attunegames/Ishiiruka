@@ -3169,8 +3169,10 @@ void CEXISlippi::handleRoomLeave(u8 *payload)
 // A room whose stages are random still goes through the draft, because that is
 // where characters are chosen. Only its stage half - steps 0 and 1, a ban then a
 // pick - has to answer itself, and the draft only ever asks its OWN player for a
-// step, so those cannot be skipped from here. They get answered: move the cursor
-// a random way along, press A once.
+// step, so those cannot be skipped from here. They get answered by playing the
+// screen: sweep the cursor a random way along, press A, and press A again on
+// the OK that comes up. ⚠ BOTH presses. One press only marks the stage - the
+// first build banned perfectly and then sat on the OK/Redo panel forever.
 //
 // ⚠ Started and stopped by MESSAGES, never by a timer:
 //   * step 0's actor is the player who bans first, which both clients already
@@ -3235,12 +3237,25 @@ void CEXISlippi::prepareRoomDraftDrive()
 			// a frame, so counting the asks is counting the frames, and it keeps
 			// the game side to "read a byte, set a button" with no memory of its
 			// own to get out of step.
-			if (draft_drive_frame < draft_drive_hold)
+			// Four phases, in frames since this step armed: sweep the cursor,
+			// press A on whatever it landed on, LET GO while the OK/Redo panel
+			// comes up, then press A again on OK - which is already the
+			// highlighted button, so there is nothing to move onto first.
+			u32 t = draft_drive_frame;
+			u32 pick_end = draft_drive_hold + ROOM_DRIVE_PRESS_FRAMES;
+			u32 gap_end = pick_end + ROOM_DRIVE_GAP_FRAMES;
+			u32 ok_end = gap_end + ROOM_DRIVE_PRESS_FRAMES;
+
+			if (t < draft_drive_hold)
 				drive = ROOM_DRIVE_SWEEP;
-			else if (draft_drive_frame < draft_drive_hold + ROOM_DRIVE_PRESS_FRAMES)
-				drive = ROOM_DRIVE_PRESS;
+			else if (t < pick_end)
+				drive = ROOM_DRIVE_PRESS; // onto the stage
+			else if (t < gap_end)
+				drive = ROOM_DRIVE_NOTHING; // released, so the next press is a press
+			else if (t < ok_end)
+				drive = ROOM_DRIVE_PRESS; // onto OK
 			else
-				drive = ROOM_DRIVE_NOTHING; // pressed; waiting for the step to land
+				drive = ROOM_DRIVE_NOTHING; // confirmed; waiting for the step to land
 
 			draft_drive_frame++;
 		}

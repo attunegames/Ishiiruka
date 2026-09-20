@@ -61,6 +61,14 @@
 #define ROOM_DRIVE_SWEEP   1   /* hold the cursor moving along the stage row */
 #define ROOM_DRIVE_PRESS   2   /* press A */
 #define ROOM_DRIVE_PRESS_FRAMES 3
+/* ⚠ A stage is not chosen by one press. The first A puts the mark on
+ * the icon and raises an OK/Redo panel with OK already highlighted; the
+ * choice is not made until OK is pressed too. The first build drove the
+ * ban perfectly and then sat on that panel forever.
+ *
+ * The gap is a RELEASE, not politeness: two presses with no frames between
+ * them are one held button, and the panel would never see a second press. */
+#define ROOM_DRIVE_GAP_FRAMES 20
 
 #define ROOM_STATE_SETTINGS 0x0A
 #define ROOM_SETTING_DRAFT  0x01   /* stages are drafted, not random */
