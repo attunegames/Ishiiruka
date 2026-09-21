@@ -116,9 +116,10 @@ REPORTING
 
 What you expected, what happened, the room code, and the three lines from
 VERSION.txt in this folder - those say exactly which build you are running,
-which the download page alone cannot. If a match failed to start or a draft
-got stuck, grab the log at
+which the download page alone cannot. If a match failed to start, a draft got
+stuck, or the game froze, the log is at
 
     <this folder>\User\Logs\dolphin.log
 
-before you close Dolphin - it is overwritten on the next launch.
+It APPENDS across launches rather than being overwritten, so restarting costs
+you nothing and every attempt in a session is in the one file.
