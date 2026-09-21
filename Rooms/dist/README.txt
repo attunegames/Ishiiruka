@@ -77,11 +77,12 @@ If that is happening to you, this is why.
 KNOWN ISSUES
 ------------
 
-This is the first build anyone outside three machines on one network has run.
 All of this is known - please do not spend time reporting it.
 
-- SPECTATING HAS NEVER BEEN TESTED OVER THE INTERNET. It works on a local
-  network. Over the internet it is unproven and may not connect at all.
+- SPECTATING OVER THE INTERNET IS UNPROVEN. It has always worked on a local
+  network, where there is no router in the way. The part that gets through a
+  router was written for beta 3 and has never run outside one network, so this
+  is the thing most likely to fail. If Y does nothing, that is why.
 
 - If a game disconnects mid-match, the room can look stuck for up to fifteen
   minutes before it sorts itself out. Making a new room is faster.
@@ -113,8 +114,10 @@ WHAT IT DOES TO YOUR COMPUTER
 REPORTING
 ---------
 
-What you expected, what happened, and the room code. If a match failed to start
-or a draft got stuck, grab the log at
+What you expected, what happened, the room code, and the three lines from
+VERSION.txt in this folder - those say exactly which build you are running,
+which the download page alone cannot. If a match failed to start or a draft
+got stuck, grab the log at
 
     <this folder>\User\Logs\dolphin.log
 
