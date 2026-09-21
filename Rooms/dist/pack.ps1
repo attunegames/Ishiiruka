@@ -94,6 +94,28 @@ if (Test-Path $ini) {
 # The README that ships is the one in this folder, not whatever the rig had.
 Copy-Item (Join-Path $PSScriptRoot "README.txt") (Join-Path $pkg "README.txt") -Force
 
+# ⚠️ Which build this is, inside the zip, where a tester can read it back to you.
+# The first beta replaced its own asset four times under one filename, so nobody
+# - including us - could tell which binary somebody was running. The first
+# question after any report is "which build?", and there was no way to answer it.
+$hash = {
+    param($rel)
+    $f = Join-Path $pkg $rel
+    if (Test-Path $f) { (Get-FileHash $f -Algorithm MD5).Hash.Substring(0, 8).ToLower() } else { "missing" }
+}
+$verLines = @(
+    "Peppy Dolphin - build identity",
+    "",
+    ("  exe      " + (& $hash 'Slippi Dolphin.exe')),
+    ("  codeset  " + (& $hash 'Sys\GameSettings\GALE01r2.ini')),
+    ("  module   " + (& $hash 'Sys\GameFiles\GALE01\SlippiRoom.dat')),
+    ("  packed   " + (Get-Date -Format 'yyyy-MM-dd HH:mm')),
+    "",
+    "If you are reporting something, paste these three lines. They say exactly",
+    "which binaries you are running, which the release page alone cannot."
+)
+Set-Content -Path (Join-Path $pkg "VERSION.txt") -Value $verLines -Encoding utf8
+
 # ⚠️ Check rather than trust. A regex here is worth more than a promise.
 #
 # ⚠️ Two different checks, because one alone is either not enough or too much.
