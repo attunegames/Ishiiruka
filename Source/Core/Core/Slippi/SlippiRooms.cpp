@@ -58,7 +58,8 @@ size_t WriteToString(char *data, size_t size, size_t count, void *out)
 // `bearer` is the access token when we have one. Supabase wants BOTH apikey and
 // Authorization; sending only the key authenticates as nobody, and auth.uid()
 // comes back null - which looks exactly like "not signed in" from the SQL side.
-std::string Post(const std::string &url, const std::string &body, const std::string &bearer)
+std::string Post(const std::string &url, const std::string &body, const std::string &bearer,
+                 long *out_status = nullptr)
 {
 	CURL *curl = curl_easy_init();
 	if (!curl)
@@ -85,6 +86,8 @@ std::string Post(const std::string &url, const std::string &body, const std::str
 	CURLcode res = curl_easy_perform(curl);
 	long status = 0;
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+	if (out_status)
+		*out_status = status;
 	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
 
@@ -253,9 +256,10 @@ const std::string &ConnectCode()
 	return s_identity_code.empty() ? s_config.connect_code : s_identity_code;
 }
 
-bool SignIn()
+// Everything SignIn does, with s_mutex ALREADY HELD. Split out so a 401 can
+// re-run it without either taking the lock twice or duplicating the fallback.
+static bool SignInLocked()
 {
-	std::lock_guard<std::mutex> lk(s_mutex);
 	if (s_signed_in)
 		return true;
 	if (!LoadConfig())
@@ -293,6 +297,43 @@ bool SignIn()
 	return false;
 }
 
+bool SignIn()
+{
+	std::lock_guard<std::mutex> lk(s_mutex);
+	return SignInLocked();
+}
+
+// The access token has stopped being accepted. Get another one.
+//
+// An access token lasts an hour; nothing here ever renewed it, and SignIn() is
+// latched by s_signed_in so it never ran a second time. One 401 therefore locked
+// a client out of its own room PERMANENTLY - the heartbeat stopped landing, the
+// room froze with everyone still standing in it, and browsing or creating from
+// then on failed too. Only restarting Dolphin fixed it.
+//
+// `stale` is the token the caller actually used. If it is no longer the current
+// one, somebody else has already refreshed and the caller should simply retry.
+//
+// That check is what keeps this safe under threads. A refresh token is SINGLE
+// USE: the heartbeat and the game thread both hit the same 401 within
+// milliseconds of each other, and if both spent it the second would fail, fall
+// through to /auth/v1/signup, and the install would silently become a DIFFERENT
+// PLAYER mid-session - orphaning its room membership and its crowns.
+static bool Reauthenticate(const std::string &stale)
+{
+	std::lock_guard<std::mutex> lk(s_mutex);
+	if (s_access_token != stale)
+		return true;
+
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] the session expired - signing in again");
+	s_signed_in = false;
+	if (SignInLocked())
+		return true;
+
+	ERROR_LOG(SLIPPI_ONLINE, "[Rooms] could not renew the session");
+	return false;
+}
+
 void SetIdentity(const std::string &name, const std::string &connect_code)
 {
 	if (!name.empty())
@@ -306,7 +347,30 @@ std::string Rpc(const std::string &fn, const std::string &args_json)
 {
 	if (!SignedIn() && !SignIn())
 		return "";
-	return Post(s_config.url + "/rest/v1/rpc/" + fn, args_json, s_access_token);
+
+	const std::string url = s_config.url + "/rest/v1/rpc/" + fn;
+
+	std::string token;
+	{
+		std::lock_guard<std::mutex> lk(s_mutex);
+		token = s_access_token;
+	}
+
+	long status = 0;
+	std::string reply = Post(url, args_json, token, &status);
+	if (status != 401)
+		return reply;
+
+	// Renew and go again, ONCE. A second 401 is a real refusal rather than an
+	// expiry, and retrying it forever would turn the heartbeat into a hammer.
+	if (!Reauthenticate(token))
+		return "";
+
+	{
+		std::lock_guard<std::mutex> lk(s_mutex);
+		token = s_access_token;
+	}
+	return Post(url, args_json, token);
 }
 
 std::string CreateRoom(const std::string &mode, bool listed)
