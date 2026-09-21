@@ -29,18 +29,6 @@ inline size_t SlotFor(s32 frame)
 const size_t kFramesReserved = 60 * 60 * 12; // twelve minutes
 } // namespace
 
-SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, const std::vector<u16> &ports,
-                                     u16 localPort,
-                                     const std::vector<std::pair<std::string, u16>> &fallback)
-{
-	m_fallback = fallback;
-	m_needed = std::min<size_t>(addrs.size(), 2);
-
-	for (int i = 0; i < 2; i++)
-		m_line[i].resize(kFramesReserved);
-	m_contiguous.store(Slippi::GAME_FIRST_FRAME - 1, std::memory_order_release);
-	m_heard[0] = m_heard[1] = Slippi::GAME_FIRST_FRAME - 1;
-
 // Ask a STUN server where the world sees THIS socket.
 //
 // ⚠ A watcher is the one client that cannot be told. Both players learn
@@ -57,8 +45,9 @@ SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, cons
 // ⚠ On the ENet host's OWN socket, before the service loop starts. A
 // separate socket would be a separate NAT mapping and a different public
 // port, so the address we published would not be the one the players' packets
-// could reach. Once ThreadFunc is running, enet_host_service owns this socket
-// and would swallow the reply as a malformed ENet packet.
+// could reach. And before the SERVICE LOOP specifically: once that is turning,
+// enet_host_service owns the socket and would swallow the reply as a malformed
+// ENet packet.
 static bool StunQuery(ENetSocket sock, const char *server, u16 serverPort, std::string &out)
 {
 	ENetAddress to;
@@ -130,6 +119,18 @@ static bool StunQuery(ENetSocket sock, const char *server, u16 serverPort, std::
 	}
 	return false;
 }
+
+SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, const std::vector<u16> &ports,
+                                     u16 localPort,
+                                     const std::vector<std::pair<std::string, u16>> &fallback)
+{
+	m_fallback = fallback;
+	m_needed = std::min<size_t>(addrs.size(), 2);
+
+	for (int i = 0; i < 2; i++)
+		m_line[i].resize(kFramesReserved);
+	m_contiguous.store(Slippi::GAME_FIRST_FRAME - 1, std::memory_order_release);
+	m_heard[0] = m_heard[1] = Slippi::GAME_FIRST_FRAME - 1;
 
 	if (enet_initialize() != 0)
 	{

@@ -23,7 +23,6 @@ std::string s_uid;
 std::string s_access_token;
 bool s_signed_in = false;
 std::mutex s_mutex;
-std::string s_watch_address;
 
 // Where the rooms live, built in, so a player needs no config file at all.
 //
@@ -383,6 +382,12 @@ std::atomic<bool> s_entering{false};
 
 // Where watchers should dial us, guarded by s_state_lock like s_room.
 std::string s_address;
+
+// And where a watcher told the room IT is, so the players can punch at it.
+// ⚠ Beside s_address on purpose: there are two anonymous-namespace blocks in
+// this file and the first one closes long before TickOnce, so a static declared
+// up there is simply not in scope down here.
+std::string s_watch_address;
 
 // The match we have already played, so we do not play it twice.
 //
