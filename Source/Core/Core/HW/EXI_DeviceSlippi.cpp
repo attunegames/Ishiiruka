@@ -3250,6 +3250,19 @@ void CEXISlippi::prepareRoomDraftDrive()
 		if (draft_drive_listen < ROOM_DRIVE_LISTEN_FRAMES)
 			draft_drive_listen++;
 
+		// ⚠ The stage half belongs to the ROOM, not to the players, so both of
+		// them are locked out for all of it - the one acting, between its own
+		// presses, and the one who is only waiting. Reported from the first beta:
+		// "I was able to move my controller then it took over".
+		//
+		// It starts on the FIRST frame the draft asks, before anything is known
+		// about whose step this is, which is the point: the window where a player
+		// could still steer was the two seconds spent working that out.
+		//
+		// It ends when the draft moves on to the characters - step 2 either asked
+		// about or performed - because those are the player's own to make.
+		bool stage_phase = draft_fetch_step < 2 && draft_last_local_step < 2;
+
 		bool already_done = my_step < 0 || draft_last_local_step >= my_step;
 		bool my_turn = false;
 		if (!already_done)
@@ -3299,13 +3312,23 @@ void CEXISlippi::prepareRoomDraftDrive()
 			else if (t < pick_end)
 				drive = ROOM_DRIVE_PRESS; // onto the stage
 			else if (t < gap_end)
-				drive = ROOM_DRIVE_NOTHING; // released, so the next press is a press
+				// LOCK, not NOTHING: it zeroes our buttons too, so it IS the
+				// release the next press needs - while still keeping the player
+				// out. NOTHING here would hand the cursor back for a third of a
+				// second in the middle of the roulette.
+				drive = ROOM_DRIVE_LOCK;
 			else if (t < ok_end)
 				drive = ROOM_DRIVE_PRESS; // onto OK
 			else
-				drive = ROOM_DRIVE_NOTHING; // confirmed; waiting for the step to land
+				drive = ROOM_DRIVE_LOCK; // pressed; waiting for the step to land
 
 			draft_drive_frame++;
+		}
+		else if (stage_phase)
+		{
+			// Not our turn, or not yet worked out whose it is. Either way the
+			// player does not get to touch this screen.
+			drive = ROOM_DRIVE_LOCK;
 		}
 	}
 

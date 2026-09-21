@@ -60,6 +60,7 @@
 #define ROOM_DRIVE_NOTHING 0
 #define ROOM_DRIVE_SWEEP   1   /* hold the cursor moving along the stage row */
 #define ROOM_DRIVE_PRESS   2   /* press A */
+#define ROOM_DRIVE_LOCK    3   /* no buttons, centred sticks */
 #define ROOM_DRIVE_PRESS_FRAMES 3
 /* ⚠ A stage is not chosen by one press. The first A puts the mark on
  * the icon and raises an OK/Redo panel with OK already highlighted; the
@@ -75,7 +76,7 @@
  * every frame. The client that DOES perform it never asks for it at all - so
  * silence is the answer, and silence needs a length. Two seconds is far longer
  * than the first ask takes to arrive and far shorter than the draft's clock. */
-#define ROOM_DRIVE_LISTEN_FRAMES 120
+#define ROOM_DRIVE_LISTEN_FRAMES 60
 
 #define ROOM_STATE_SETTINGS 0x0A
 #define ROOM_SETTING_DRAFT  0x01   /* stages are drafted, not random */
