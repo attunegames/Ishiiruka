@@ -23,6 +23,7 @@ std::string s_uid;
 std::string s_access_token;
 bool s_signed_in = false;
 std::mutex s_mutex;
+std::string s_watch_address;
 
 // Where the rooms live, built in, so a player needs no config file at all.
 //
@@ -516,6 +517,21 @@ void ReadReply(const json &j, Rooms::State &s)
 			s.watch_targets.push_back(p.addr);
 	}
 
+	// Who to punch towards, so their watcher can reach us.
+	auto pu = j.find("punch");
+	if (pu != j.end() && pu->is_array())
+	{
+		for (const auto &e : *pu)
+		{
+			if (e.is_string())
+			{
+				std::string a = e.get<std::string>();
+				if (!a.empty())
+					s.punch.push_back(a);
+			}
+		}
+	}
+
 	s.queue = ReadRoster(j, "queue");
 	s.lobby = ReadRoster(j, "lobby");
 
@@ -547,10 +563,11 @@ void TickOnce()
 	if (!Rooms::SignedIn() && !Rooms::SignIn())
 		return;
 
-	std::string addr;
+	std::string addr, watch_addr;
 	{
 		std::lock_guard<std::mutex> lock(s_state_lock);
 		addr = s_address;
+		watch_addr = s_watch_address;
 	}
 
 	json args{{"p_room", room},
@@ -563,6 +580,12 @@ void TickOnce()
 	// the pairing lasts rather than being cleared by every idle tick.
 	if (!addr.empty())
 		args["p_addr"] = addr;
+
+	// Same rule for the watch address: send it while we are watching, and let a
+	// missing one mean "unchanged" rather than "stop". pd_tick has taken this
+	// parameter since the spectate work began and nothing ever sent it.
+	if (!watch_addr.empty())
+		args["p_watch_addr"] = watch_addr;
 
 	// Only send a pick when there is one. Sending null every tick would be
 	// harmless - pd_tick ignores nulls - but it makes the log unreadable when
@@ -742,6 +765,15 @@ void AbandonEnter()
 bool LanForTesting()
 {
 	return s_config.lan_for_testing;
+}
+
+void SetWatchAddress(const std::string &external)
+{
+	std::lock_guard<std::mutex> lock(s_state_lock);
+	if (s_watch_address == external)
+		return;
+	s_watch_address = external;
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] publishing our watch address %s", external.c_str());
 }
 
 void SetAddress(const std::string &external, const std::string &lan)

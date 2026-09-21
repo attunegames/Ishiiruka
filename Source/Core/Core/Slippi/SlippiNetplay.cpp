@@ -1631,6 +1631,33 @@ void SlippiNetplayClient::SetMatchSelections(SlippiPlayerSelections &s)
 	SendAsync(std::move(spac));
 }
 
+void SlippiNetplayClient::PunchTo(const std::string &addr)
+{
+	if (!m_client || addr.empty())
+		return;
+
+	auto colon = addr.find_last_of(':');
+	if (colon == std::string::npos)
+		return;
+
+	ENetAddress to;
+	std::string host = addr.substr(0, colon);
+	if (enet_address_set_host(&to, host.c_str()) != 0)
+		return;
+	to.port = (enet_uint16)strtol(addr.substr(colon + 1).c_str(), nullptr, 10);
+	if (to.port == 0)
+		return;
+
+	// ⚠ Deliberately not an ENet packet. A watcher connects properly a moment
+	// later; this only has to make our router believe we started the conversation,
+	// so the watcher's real packets are let back in rather than dropped.
+	u8 byte = 0;
+	ENetBuffer buf;
+	buf.data = &byte;
+	buf.dataLength = 1;
+	enet_socket_send(m_client->socket, &to, &buf, 1);
+}
+
 void SlippiNetplayClient::SendGamePrepStep(SlippiGamePrepStepResults &s)
 {
 	auto spac = std::make_unique<sf::Packet>();

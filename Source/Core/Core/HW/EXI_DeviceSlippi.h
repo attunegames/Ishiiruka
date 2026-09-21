@@ -470,6 +470,7 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomStageDraft(u8 *payload);
 	void prepareRoomDraftDrive();
 	void prepareRoomLeaveTraining();
+	void punchAtWatchers();
 
 	// True once a watch is up and has enough to show. Everything a watcher does
 	// differently is gated on this, so a player's match takes exactly the paths
@@ -557,6 +558,7 @@ class CEXISlippi : public IEXIDevice
 	u16 draft_drive_frame = 0;
 	bool draft_drive_armed = false;
 	u64 draft_drive_last_ask = 0;
+	u64 last_punch_ms = 0;
 	u16 draft_drive_listen = 0;
 	int draft_fetch_step = -1;   // a step the draft asked us about, so NOT ours
 

@@ -1339,8 +1339,41 @@ bool CEXISlippi::isDisconnected()
 	return status != SlippiNetplayClient::SlippiConnectStatus::NET_CONNECT_STATUS_CONNECTED;
 }
 
+// Open our router towards everyone trying to watch this match.
+//
+// ⚠ Repeatedly, not once. A NAT mapping made by one packet expires in
+// anything from twenty seconds upwards, a watcher can arrive at any point in a
+// match, and the punch has to already have happened when they do. Once a
+// second is far below the shortest timeout worth designing for and is two
+// packets a second in the worst case.
+void CEXISlippi::punchAtWatchers()
+{
+	if (!slippi_netplay || isWatching())
+		return;
+
+	u64 now = Common::Timer::GetTimeMs();
+	if (now - last_punch_ms < 1000)
+		return;
+	last_punch_ms = now;
+
+	Rooms::State rs = Rooms::Latest();
+	for (const auto &a : rs.punch)
+		slippi_netplay->PunchTo(a);
+
+	// Said when the list CHANGES, which is when somebody starts or stops
+	// watching - not every second.
+	static size_t said = (size_t)-1;
+	if (rs.punch.size() != said)
+	{
+		said = rs.punch.size();
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] punching a hole for %d watcher(s)", (int)said);
+	}
+}
+
 void CEXISlippi::handleOnlineInputs(u8 *payload)
 {
+	punchAtWatchers();
+
 	m_read_queue.clear();
 
 	s32 frame = Common::swap32(&payload[0]);
@@ -3471,6 +3504,10 @@ void CEXISlippi::handleRoomWatch()
 	// if the punch list is ever wired up, for players whose router will not take
 	// a first packet from a stranger.
 	watch_client = std::make_unique<SlippiWatchClient>(addrs, ports, 0, fallback);
+
+	// Tell the room where we are, so both players can punch a hole towards this
+	// socket. Empty when STUN did not answer, and then this is a LAN-only watch.
+	Rooms::SetWatchAddress(watch_client->PublicAddress());
 	WARN_LOG(SLIPPI_ONLINE, "[Rooms] watching %s and %s", rs.watch_targets[0].c_str(),
 	         rs.watch_targets[1].c_str());
 }

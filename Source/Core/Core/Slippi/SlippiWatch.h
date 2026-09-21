@@ -33,6 +33,12 @@
 class SlippiWatchClient
 {
   public:
+	// Where a STUN server saw this watcher's socket, as "host:port", or empty
+	// if it never answered. The room publishes it so both players can punch a
+	// hole towards it - without that their routers drop everything this end
+	// sends, which is what "0 of 2 answered" was.
+	const std::string &PublicAddress() const { return m_publicAddr; }
+
 	// Both players' addresses, and the local port to watch from.
 	//
 	// One socket for both of them on purpose: it is one hole through this end's
@@ -106,6 +112,9 @@ class SlippiWatchClient
 	void Advance();
 
 	ENetHost *m_host = nullptr;
+	// Filled once, in the constructor, before the thread starts - so it is read
+	// by other threads without a lock and never written again.
+	std::string m_publicAddr;
 	std::vector<ENetPeer *> m_players;
 
 	// How many of them there are, which is NOT m_players.size() once the test

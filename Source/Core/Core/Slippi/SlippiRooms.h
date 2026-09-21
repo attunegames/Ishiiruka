@@ -163,6 +163,15 @@ struct State
 	// Empty until they are in a match and have published it.
 	std::vector<std::string> watch_targets;
 
+	// Everyone in this room who is trying to watch, as "host:port". The two
+	// players send a packet at each of these so their own routers will let the
+	// watcher's packets back in.
+	//
+	// ⚠ The server has been computing and returning this list since the
+	// spectate work began, and nothing ever read it. Watching worked on a LAN,
+	// where there is no NAT to open, and failed over the internet every time.
+	std::vector<std::string> punch;
+
 	std::vector<Player> active; // the two playing, host first
 	std::vector<Player> queue;  // waiting, in the order the room will pair them
 	std::vector<Player> lobby;  // present, not waiting for a game
@@ -196,6 +205,15 @@ bool InRoom();
 // `lan` is TEST ONLY and is published only when peppy.json says lanForTesting -
 // see Config::lan_for_testing. It rides along in the same field, after a space.
 void SetAddress(const std::string &external, const std::string &lan);
+
+// Where a STUN server saw this client's WATCH socket, as "host:port".
+//
+// ⚠ A watcher is the one client that cannot be told its own address any
+// other way. Both players are handed theirs by Slippi's matchmaking server
+// when the match is arranged; a watcher is in no match and gets nothing. The
+// room publishes this so the two players can punch a hole towards it, because
+// their routers drop anything from an address they have never sent to.
+void SetWatchAddress(const std::string &external);
 
 // ⚠⚠ TEST RIGS ONLY - DELETE BEFORE THE FIRST BETA ⚠⚠
 bool LanForTesting();

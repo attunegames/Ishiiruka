@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "Common/Logging/Log.h"
+#include "Common/StringUtil.h"
 #include "Common/Thread.h"
 #include "Common/Timer.h"
 #include "Core/NetPlayProto.h"
@@ -38,6 +39,96 @@ SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, cons
 	m_contiguous.store(Slippi::GAME_FIRST_FRAME - 1, std::memory_order_release);
 	m_heard[0] = m_heard[1] = Slippi::GAME_FIRST_FRAME - 1;
 
+// Ask a STUN server where the world sees THIS socket.
+//
+// ⚠ A watcher is the one client that cannot be told. Both players learn
+// their public address for free - Slippi's matchmaking server reports where it
+// saw each of them when it arranges the match, which is why nothing else here
+// needs STUN. A watcher is in no match, gets no assignment, and so has no idea
+// what its own address looks like from outside.
+//
+// It has to know, because the players cannot punch a hole towards an address
+// nobody published. Without this the watcher's packets arrive at two routers
+// that have never heard of it and are dropped - which is exactly what the
+// first beta did, four times, "0 of 2 answered".
+//
+// ⚠ On the ENet host's OWN socket, before the service loop starts. A
+// separate socket would be a separate NAT mapping and a different public
+// port, so the address we published would not be the one the players' packets
+// could reach. Once ThreadFunc is running, enet_host_service owns this socket
+// and would swallow the reply as a malformed ENet packet.
+static bool StunQuery(ENetSocket sock, const char *server, u16 serverPort, std::string &out)
+{
+	ENetAddress to;
+	if (enet_address_set_host(&to, server) != 0)
+		return false;
+	to.port = serverPort;
+
+	// A binding request: type 0x0001, no attributes, the magic cookie, and a
+	// transaction id we can recognise the answer by.
+	u8 req[20] = {0};
+	req[1] = 0x01;
+	req[4] = 0x21; req[5] = 0x12; req[6] = 0xA4; req[7] = 0x42;
+	for (int i = 8; i < 20; i++)
+		req[i] = (u8)(rand() & 0xFF);
+
+	ENetBuffer buf;
+	buf.data = req;
+	buf.dataLength = sizeof(req);
+	if (enet_socket_send(sock, &to, &buf, 1) <= 0)
+		return false;
+
+	// Three short waits rather than one long one: the first packet out of a
+	// fresh socket is the one most likely to be lost.
+	for (int attempt = 0; attempt < 3; attempt++)
+	{
+		enet_uint32 cond = ENET_SOCKET_WAIT_RECEIVE;
+		if (enet_socket_wait(sock, &cond, 300) != 0 || !(cond & ENET_SOCKET_WAIT_RECEIVE))
+		{
+			enet_socket_send(sock, &to, &buf, 1);
+			continue;
+		}
+
+		u8 resp[512];
+		ENetAddress from;
+		ENetBuffer rbuf;
+		rbuf.data = resp;
+		rbuf.dataLength = sizeof(resp);
+		int got = enet_socket_receive(sock, &from, &rbuf, 1);
+		if (got < 20)
+			continue;
+
+		// A binding SUCCESS response carrying our transaction id.
+		if (resp[0] != 0x01 || resp[1] != 0x01 || memcmp(resp + 8, req + 8, 12) != 0)
+			continue;
+
+		int len = (resp[2] << 8) | resp[3];
+		int at = 20;
+		while (at + 4 <= 20 + len && at + 4 <= got)
+		{
+			int type = (resp[at] << 8) | resp[at + 1];
+			int alen = (resp[at + 2] << 8) | resp[at + 3];
+			const u8 *val = resp + at + 4;
+
+			// XOR-MAPPED-ADDRESS, IPv4. The port and address are XORed with the
+			// cookie, which is what stops a naive middlebox rewriting them.
+			if (type == 0x0020 && alen >= 8 && val[1] == 0x01)
+			{
+				u16 port = (u16)(((val[2] << 8) | val[3]) ^ 0x2112);
+				u8 ip[4];
+				ip[0] = val[4] ^ 0x21;
+				ip[1] = val[5] ^ 0x12;
+				ip[2] = val[6] ^ 0xA4;
+				ip[3] = val[7] ^ 0x42;
+				out = StringFromFormat("%d.%d.%d.%d:%d", ip[0], ip[1], ip[2], ip[3], port);
+				return true;
+			}
+			at += 4 + ((alen + 3) & ~3);
+		}
+	}
+	return false;
+}
+
 	if (enet_initialize() != 0)
 	{
 		ERROR_LOG(SLIPPI_ONLINE, "[Watch] could not start ENet");
@@ -59,6 +150,15 @@ SlippiWatchClient::SlippiWatchClient(const std::vector<std::string> &addrs, cons
 		m_status.store(Status::FAILED, std::memory_order_release);
 		return;
 	}
+
+	// Where the world sees this socket, so the players can punch towards it.
+	// Failure is not fatal: on a local network there is no NAT to open and
+	// watching works without any of this.
+	if (StunQuery(m_host->socket, "stun.l.google.com", 19302, m_publicAddr))
+		WARN_LOG(SLIPPI_ONLINE, "[Watch] this end is %s from outside", m_publicAddr.c_str());
+	else
+		WARN_LOG(SLIPPI_ONLINE, "[Watch] STUN did not answer - the players cannot be "
+		                        "told where to punch, so this will only work on a LAN");
 
 	for (size_t i = 0; i < addrs.size() && i < 2; i++)
 	{

@@ -208,6 +208,18 @@ class SlippiNetplayClient
 	};
 
 	bool IsDecider();
+
+	// Send one throwaway datagram at `addr` ("host:port") out of the socket this
+	// match is already using.
+	//
+	// ⚠ THE SAME SOCKET is the entire point. A router opens a return path for
+	// the exact local port that sent something, so punching from anywhere else
+	// leaves the game's own port as closed as it was. That is why this lives here
+	// rather than anywhere more convenient.
+	//
+	// The payload is nonsense on purpose - it only has to leave. ENet on the far
+	// end discards it as a malformed packet, which is all we want.
+	void PunchTo(const std::string &addr);
 	bool IsConnectionSelected();
 	u8 LocalPlayerPort();
 	SlippiConnectStatus GetSlippiConnectStatus();
