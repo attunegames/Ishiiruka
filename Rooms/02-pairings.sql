@@ -210,7 +210,15 @@ begin
      and (host = v_me or guest = v_me)
    order by created_at desc limit 1;
 
-  if v_pair.id is null and not p_presence_only then
+  -- ⚠️ ONE MATCH AT A TIME, and the room-wide check is what enforces it.
+  -- The per-player checks below only ask whether each of the two is free. With
+  -- four people in a room the two who were NOT playing were both free, so a
+  -- second concurrent match started - which breaks the rotation the room exists
+  -- for: the winner has nobody to play, and the band can only show one match.
+  if v_pair.id is null and not p_presence_only
+     and not exists (select 1 from pd_pairings pr
+                      where pr.room = p_room
+                        and pr.state in ('pending', 'ready')) then
     -- Free = in the queue, still alive, and not already in a match. hold_until
     -- keeps the winner's place while they are still picking a character, so
     -- they count as free even before they press Start again.

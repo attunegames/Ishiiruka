@@ -32,6 +32,12 @@ $exclude = @(
     'User\\Slippi\\direct-codes\.json$',
     'User\\Slippi\\iso-cache',
     'User\\Config\\peppy\.json$',
+    # ⚠️ The rig's CONTROLLER mapping. Alpha drives port 1 from the keyboard so
+    # the menus can be automated, and shipping that gave every tester a keyboard
+    # on port 1 instead of their own controller. A real Slippi install has no
+    # GCPadNew.ini at all - SIDevice 12 reads the adapter directly - so the right
+    # thing to ship is nothing and let Dolphin decide.
+    'User\\Config\\GCPadNew\.ini$',
     'User\\Logs\\',
     '^Replays\\',
     '\.peppy-bak$',
