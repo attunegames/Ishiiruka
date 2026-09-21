@@ -120,7 +120,7 @@ SlippiUser::~SlippiUser() {}
 //
 // Only when we have none. An existing copy is left alone, so a token refreshed
 // here is never replaced by an older one from the launcher.
-static void AdoptLauncherAccount()
+void SlippiUser::AdoptLauncherAccount()
 {
 #ifdef _WIN32
 	// ⚠️ Dolphin's own path indices, not a path built here. F_USERJSON_IDX IS
@@ -164,6 +164,9 @@ static void AdoptLauncherAccount()
 
 bool SlippiUser::AttemptLogin()
 {
+	// ⚠ Belt and braces. The real call is in the CEXISlippi constructor,
+	// before the Rust device exists - here it is a no-op whenever the account
+	// is already in place, which after that call it always is.
 	AdoptLauncherAccount();
 
 	// The REAL login first, and that ordering is the whole change.

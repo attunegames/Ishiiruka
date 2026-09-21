@@ -43,6 +43,17 @@ class SlippiUser
 	SlippiUser(uintptr_t rs_exi_device_ptr);
 	~SlippiUser();
 
+	// Copy the Slippi Launcher's account into this folder, if it has none.
+	//
+	// ⚠️ CALL THIS BEFORE THE RUST DEVICE IS CREATED. The Rust side is handed
+	// user_config_folder in slprs_exi_device_create and reads the account THEN.
+	// This used to run inside AttemptLogin, which is ~7 seconds later, so a
+	// first run on a clean machine found no account, showed Melee's "Log-in"
+	// screen with no Rooms row, and worked perfectly on every run after -
+	// because by then the file was already there. Static for that reason: it
+	// has to be callable before there is a SlippiUser at all.
+	static void AdoptLauncherAccount();
+
 	bool AttemptLogin();
 	void OpenLogInPage();
 	bool UpdateApp();

@@ -247,6 +247,16 @@ CEXISlippi::CEXISlippi()
 	// @TODO: Eventually we should move `GetSlippiUserConfigFolder` out of the File module.
 	std::string userConfigFolder = File::GetSlippiUserConfigFolder();
 
+	// ⚠ BEFORE the Rust device, not after. The Rust side is handed
+	// user_config_folder below and reads the Slippi account THEN, once. This
+	// used to be called from SlippiUser::AttemptLogin, about seven seconds
+	// later, so a first run on a clean machine found no account: Melee drew its
+	// "Log-in" screen with no Rooms row at all, and then worked perfectly on
+	// every later run, because by then the file was already in place. A bug that
+	// only happens once per machine is one every new player hits and nobody
+	// testing a second time can see.
+	SlippiUser::AdoptLauncherAccount();
+
 	SlippiRustEXIConfig slprs_exi_config;
 	slprs_exi_config.iso_path = isoPath.c_str();
 	slprs_exi_config.user_config_folder = userConfigFolder.c_str();
