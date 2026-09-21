@@ -561,6 +561,13 @@ class CEXISlippi : public IEXIDevice
 	u64 last_punch_ms = 0;
 	u16 draft_drive_listen = 0;
 	int draft_fetch_step = -1;   // a step the draft asked us about, so NOT ours
+	// The highest opponent step the draft has actually RECEIVED.
+	//
+	// ⚠ Recorded where the draft consumes it, never by asking.
+	// GetGamePrepResults POPS every entry that is not the step requested, so a
+	// speculative call for step 0 while step 1 is at the front throws the
+	// opponent's stage pick away.
+	int draft_opp_step_done = -1;
 
 	u32 frameSeqIdx = 0;
 

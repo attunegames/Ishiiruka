@@ -3248,6 +3248,7 @@ void CEXISlippi::prepareRoomDraftDrive()
 		draft_drive_frame = 0;
 		draft_drive_listen = 0;
 		draft_fetch_step = -1;
+		draft_opp_step_done = -1;
 	}
 	draft_drive_last_ask = now;
 
@@ -3285,16 +3286,32 @@ void CEXISlippi::prepareRoomDraftDrive()
 
 		// ⚠ The stage half belongs to the ROOM, not to the players, so both of
 		// them are locked out for all of it - the one acting, between its own
-		// presses, and the one who is only waiting. Reported from the first beta:
-		// "I was able to move my controller then it took over".
+		// presses, and the one who is only waiting. It starts on the FIRST frame
+		// the draft asks, before anything is known about whose step this is,
+		// which is the point: the window a player could still steer in was the
+		// time spent working that out.
 		//
-		// It starts on the FIRST frame the draft asks, before anything is known
-		// about whose step this is, which is the point: the window where a player
-		// could still steer was the two seconds spent working that out.
-		//
-		// It ends when the draft moves on to the characters - step 2 either asked
-		// about or performed - because those are the player's own to make.
-		bool stage_phase = draft_fetch_step < 2 && draft_last_local_step < 2;
+		// ⚠ It ends when BOTH STAGE STEPS ARE DONE - asked directly, not guessed
+		// from how far the counters have got. The first version said
+		// `draft_fetch_step < 2 && draft_last_local_step < 2`, and that deadlocked
+		// the draft: the client performing steps 0 and 2 never FETCHES step 2, it
+		// performs it, so its fetch counter stops at 1 and its completed counter
+		// stops at 0. Both stay under two forever, so it stayed locked, so it
+		// could never complete step 2 - while the other client unlocked properly
+		// and waited for a partner who was frozen. Nobody could pick a character.
+		// ⚠ Each side of these is a REMEMBERED fact, not a question asked now.
+		// GetGamePrepResults pops everything it passes over, so probing it for a
+		// step that is not at the front throws away the opponent's stage pick.
+		bool step0_done = (my_step == 0 && draft_last_local_step >= 0) ||
+		                  draft_opp_step_done >= 0;
+		bool step1_done = (my_step == 1 && draft_last_local_step >= 1) ||
+		                  draft_opp_step_done >= 1;
+		bool stage_phase = !(step0_done && step1_done);
+
+		// And a backstop: if the draft is asking about a CHARACTER step, the stage
+		// half is over whatever the rest of this thinks.
+		if (draft_fetch_step >= 2)
+			stage_phase = false;
 
 		bool already_done = my_step < 0 || draft_last_local_step >= my_step;
 		bool my_turn = false;
@@ -4338,6 +4355,12 @@ void CEXISlippi::prepareGamePrepOppStep(const SlippiExiTypes::GpFetchStepQuery &
 		// If we have received a response from the opponent, prepare the values for response
 		resp.is_found = true;
 		resp.is_skip = false;
+
+		// The opponent's step is in hand. This is the only safe place to notice
+		// that: GetGamePrepResults discards anything it passes over, so nothing
+		// else may go looking.
+		if ((int)query.step_idx > draft_opp_step_done)
+			draft_opp_step_done = query.step_idx;
 		resp.char_selection = res.char_selection;
 		resp.char_color_selection = res.char_color_selection;
 		memcpy(resp.stage_selections, res.stage_selections, 2);
