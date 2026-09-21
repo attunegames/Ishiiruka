@@ -1,6 +1,7 @@
 #include "Core/Slippi/SlippiWatch.h"
 
 #include <algorithm>
+#include <cstdlib>   // rand, for the STUN transaction id
 #include <cstring>
 
 #include "Common/Logging/Log.h"

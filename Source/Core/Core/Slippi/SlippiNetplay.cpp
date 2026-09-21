@@ -3,6 +3,8 @@
 // Refer to the license.txt file included.
 
 #include "Core/Slippi/SlippiNetplay.h"
+
+#include <cstdlib>   // strtol, for the punch address
 #include "Common/CommonTypes.h"
 #include "Common/ENetUtil.h"
 #include "Common/MsgHandler.h"
