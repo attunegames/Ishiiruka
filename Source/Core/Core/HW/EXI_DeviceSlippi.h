@@ -262,6 +262,7 @@ class CEXISlippi : public IEXIDevice
 		CMD_ROOM_LEAVE = 0xCC,  // hold B: out of the room altogether
 		CMD_ROOM_STAGE_DRAFT = 0xCD, // the owner turning the stage draft on or off
 		CMD_ROOM_DRAFT_DRIVE = 0xCE, // read back: what the pad should do in the draft
+		CMD_ROOM_LEAVE_TRAIN = 0xCF, // read back: should practice end, the match is on
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -363,6 +364,7 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_ROOM_LEAVE, 0x1},        // one byte: were we IN a room, or just browsing
 	    {CMD_ROOM_STAGE_DRAFT, 0x1},  // one byte: the setting we want
 	    {CMD_ROOM_DRAFT_DRIVE, 0x0},  // no payload - the answer is one byte
+	    {CMD_ROOM_LEAVE_TRAIN, 0x0},  // no payload - the answer is one byte
 
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
@@ -467,6 +469,7 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomLeave(u8 *payload);
 	void handleRoomStageDraft(u8 *payload);
 	void prepareRoomDraftDrive();
+	void prepareRoomLeaveTraining();
 
 	// True once a watch is up and has enough to show. Everything a watcher does
 	// differently is gated on this, so a player's match takes exactly the paths

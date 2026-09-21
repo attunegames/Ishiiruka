@@ -3338,6 +3338,35 @@ void CEXISlippi::prepareRoomDraftDrive()
 	m_read_queue.push_back(drive);
 }
 
+// Should practice end? Asked once a frame while a player is practising in a
+// room.
+//
+// ⚠ A player who goes off to practise is STILL IN THE QUEUE - that is the
+// whole point of the offer - so the room will pair them while they are in
+// there. Nothing brought them back: the match was arranged, both sides were
+// waiting, and one of them was in training with no idea. Reported from the
+// first beta night: "when someone was in training mode and a match ended, it
+// did not load them into their match and exit them out of training."
+//
+// Only the ENDING is decided here. RoomTrainSceneDecide already sends a
+// finished practice back to the room, and the room already starts a match the
+// moment it sees one is ready - so ending the scene is the whole fix.
+void CEXISlippi::prepareRoomLeaveTraining()
+{
+	m_read_queue.clear();
+
+	Rooms::State rs = Rooms::Latest();
+	bool leave = Rooms::InRoom() && rs.valid && rs.ready;
+
+	// Said once rather than every frame - this is asked sixty times a second.
+	static bool said = false;
+	if (leave && !said)
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] a match is ready - leaving practice");
+	said = leave;
+
+	m_read_queue.push_back(leave ? 1 : 0);
+}
+
 void CEXISlippi::handleRoomStageDraft(u8 *payload)
 {
 	bool on = payload[0] != 0;
@@ -4510,6 +4539,9 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_ROOM_DRAFT_DRIVE:
 			prepareRoomDraftDrive();
+			break;
+		case CMD_ROOM_LEAVE_TRAIN:
+			prepareRoomLeaveTraining();
 			break;
 		case CMD_ROOM_LEAVE:
 			handleRoomLeave(&memPtr[bufLoc + 1]);
