@@ -9,6 +9,7 @@
 #include "Common/Timer.h"
 #include "Core/NetPlayProto.h"
 #include "Core/Slippi/SlippiNetplay.h"
+#include "Core/Slippi/SlippiRooms.h"
 #include <SlippiLib/SlippiGame.h>
 
 #include <SFML/Network/Packet.hpp>
@@ -151,15 +152,6 @@ static bool StunQuery(ENetSocket sock, const char *server, u16 serverPort, std::
 		return;
 	}
 
-	// Where the world sees this socket, so the players can punch towards it.
-	// Failure is not fatal: on a local network there is no NAT to open and
-	// watching works without any of this.
-	if (StunQuery(m_host->socket, "stun.l.google.com", 19302, m_publicAddr))
-		WARN_LOG(SLIPPI_ONLINE, "[Watch] this end is %s from outside", m_publicAddr.c_str());
-	else
-		WARN_LOG(SLIPPI_ONLINE, "[Watch] STUN did not answer - the players cannot be "
-		                        "told where to punch, so this will only work on a LAN");
-
 	for (size_t i = 0; i < addrs.size() && i < 2; i++)
 	{
 		ENetAddress addr;
@@ -229,6 +221,31 @@ SlippiWatchClient::~SlippiWatchClient()
 void SlippiWatchClient::ThreadFunc()
 {
 	Common::SetCurrentThreadName("Slippi watch");
+
+	// Where the world sees this socket, so the players can punch towards it.
+	//
+	// ⚠ ON THIS THREAD, not in the constructor. StunQuery waits for a reply
+	// and retries twice, so it can take the best part of a second - and the
+	// constructor runs on the GAME thread, where that is a visible freeze the
+	// moment somebody presses Y.
+	//
+	// Publishing from here is also the right order. The dial has already gone out
+	// by now and ENet keeps retrying it, so the punch only has to land inside the
+	// twenty seconds this end waits before giving up - which it does, because a
+	// tick is a second at most.
+	//
+	// Failure is not fatal: on a local network there is no NAT to open and
+	// watching works without any of this.
+	if (StunQuery(m_host->socket, "stun.l.google.com", 19302, m_publicAddr))
+	{
+		WARN_LOG(SLIPPI_ONLINE, "[Watch] this end is %s from outside", m_publicAddr.c_str());
+		Rooms::SetWatchAddress(m_publicAddr);
+	}
+	else
+	{
+		WARN_LOG(SLIPPI_ONLINE, "[Watch] STUN did not answer - the players cannot be "
+		                        "told where to punch, so this will only work on a LAN");
+	}
 
 	size_t connected = 0;
 	u64 lastWaitLogUs = 0;

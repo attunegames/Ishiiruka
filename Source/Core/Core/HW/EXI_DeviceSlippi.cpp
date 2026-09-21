@@ -3498,16 +3498,20 @@ void CEXISlippi::handleRoomWatch()
 			fallback.emplace_back(host, port);
 	}
 
-	// Port 0: the OS picks one. A watcher dials out, so its own NAT opens on the
-	// way and the players learn where it is from the connection itself - there
-	// is nothing yet that needs this port to be predictable. That changes only
-	// if the punch list is ever wired up, for players whose router will not take
-	// a first packet from a stranger.
+	// Port 0: the OS picks one, and STUN then reports whatever the world sees -
+	// so it does not need to be predictable, only discoverable.
+	//
+	// ⚠ The old reasoning here was that a watcher dials out, so its own NAT
+	// opens on the way and the players learn where it is from the connection
+	// itself. That is true of OUR router and useless: it is the PLAYERS' routers
+	// that drop a first packet from a stranger, and they do. Watching worked on a
+	// LAN and failed over the internet every time until the punch list was wired
+	// up at both ends.
 	watch_client = std::make_unique<SlippiWatchClient>(addrs, ports, 0, fallback);
 
-	// Tell the room where we are, so both players can punch a hole towards this
-	// socket. Empty when STUN did not answer, and then this is a LAN-only watch.
-	Rooms::SetWatchAddress(watch_client->PublicAddress());
+	// ⚠ The watch client publishes its own address, from its own thread, once
+	// STUN has answered - see ThreadFunc. Doing it here would mean blocking the
+	// game thread on a network round trip the moment somebody presses Y.
 	WARN_LOG(SLIPPI_ONLINE, "[Rooms] watching %s and %s", rs.watch_targets[0].c_str(),
 	         rs.watch_targets[1].c_str());
 }
