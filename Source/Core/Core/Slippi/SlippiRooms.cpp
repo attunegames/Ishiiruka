@@ -497,6 +497,33 @@ std::string Str(const json &j, const char *key)
 	return it->get<std::string>();
 }
 
+// A field that may be MISSING or null, which are not the same thing to
+// nlohmann and should be to us.
+//
+// ⚠ value() gives the default for a missing key and THROWS for a null one.
+// pd_tick returns null for anything with no answer yet - no pairing, no room
+// row, nobody on the clock - and the throw is caught around the whole of
+// ApplyReply, so ONE null boolean discards the entire tick. Every room screen
+// went blank for forty minutes on the back of a single one, and the only
+// symptom was a room that quietly did nothing.
+//
+// So nothing in a tick reply may be read with value(). Read it with this.
+template <typename T>
+static T Opt(const nlohmann::json &j, const char *key, T fallback)
+{
+	auto it = j.find(key);
+	if (it == j.end() || it->is_null())
+		return fallback;
+	try
+	{
+		return it->get<T>();
+	}
+	catch (const std::exception &)
+	{
+		return fallback;   // the wrong TYPE is still not worth losing the tick over
+	}
+}
+
 std::vector<Rooms::Player> ReadRoster(const json &j, const char *key)
 {
 	std::vector<Rooms::Player> out;
@@ -508,7 +535,7 @@ std::vector<Rooms::Player> ReadRoster(const json &j, const char *key)
 		Rooms::Player p;
 		p.name = Str(m, "name");
 		p.code = Str(m, "code");
-		p.crowns = m.value("crowns", 0);
+		p.crowns = Opt(m, "crowns", 0);
 		p.addr = Str(m, "addr");
 		out.push_back(p);
 	}
@@ -569,10 +596,10 @@ void ReadReply(const json &j, Rooms::State &s)
 	s.state = Str(j, "state");
 	// ⚠ Null whenever there is no pairing, which is most of the time.
 	s.match_id = Str(j, "matchId");
-	s.is_host = j.value("isHost", false);
-	s.stage_draft = j.value("stageDraft", false);
-	s.is_owner = j.value("isOwner", false);
-	s.position = j.value("position", 0);
+	s.is_host = Opt(j, "isHost", false);
+	s.stage_draft = Opt(j, "stageDraft", false);
+	s.is_owner = Opt(j, "isOwner", false);
+	s.position = Opt(j, "position", 0);
 	s.active = ReadRoster(j, "active");
 	s.ready = s.state == "ready";
 
@@ -610,19 +637,13 @@ void ReadReply(const json &j, Rooms::State &s)
 		s.draft.stage = PickedOr(*d, "stage");
 		s.draft.host_char = PickedOr(*d, "hostChar");
 		s.draft.guest_char = PickedOr(*d, "guestChar");
-		s.draft.host_color = d->value("hostColor", 0);
-		s.draft.guest_color = d->value("guestColor", 0);
-		s.draft.playing = d->value("playing", false);
-		s.draft.pick_turn = d->value("pickTurn", Rooms::Draft::TURN_NOBODY);
-		// ⚠️ null when nobody is on the clock, which nlohmann will not give
-		// to an int - value() returns the default only for a MISSING key, not a
-		// null one, and reads a null as a type error.
-		{
-			auto e = d->find("pickEndsIn");
-			s.draft.pick_ends_in =
-			    (e != d->end() && !e->is_null()) ? e->get<int>() : 0;
-		}
-		s.draft.pick_is_mine = d->value("pickIsMine", false);
+		s.draft.host_color = Opt(*d, "hostColor", 0);
+		s.draft.guest_color = Opt(*d, "guestColor", 0);
+		s.draft.playing = Opt(*d, "playing", false);
+		s.draft.pick_turn = Opt(*d, "pickTurn", (int)Rooms::Draft::TURN_NOBODY);
+		// Null when nobody is on the clock, which is most of the time.
+		s.draft.pick_ends_in = Opt(*d, "pickEndsIn", 0);
+		s.draft.pick_is_mine = Opt(*d, "pickIsMine", false);
 	}
 
 }
@@ -1007,8 +1028,8 @@ void FetchRooms(const std::string &mode)
 				// A room whose owner never registered a name has a null here,
 				// and one null would have thrown away the whole listing.
 				l.owner = Str(r, "owner");
-				l.players = r.value("players", 0);
-				l.capacity = r.value("capacity", 8);
+				l.players = Opt(r, "players", 0);
+				l.capacity = Opt(r, "capacity", 8);
 				found.push_back(l);
 			}
 		}
