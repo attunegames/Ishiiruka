@@ -1666,6 +1666,9 @@ bool CEXISlippi::shouldSkipOnlineFrame(s32 frame, s32 finalizedFrame)
 	return false;
 }
 
+// Defined in VideoCommon/RenderBase.cpp, beside the Swap it gates.
+extern bool g_slippi_hide_frames;
+
 bool CEXISlippi::shouldAdvanceOnlineFrame(s32 frame)
 {
 	// A watcher has no opponent to stay level with - it chases the timeline, and
@@ -1684,12 +1687,23 @@ bool CEXISlippi::shouldAdvanceOnlineFrame(s32 frame)
 	{
 		s32 behind = watch_client->LatestFrame() - frame;
 		setCatchUpSpeed(behind > 10);
+
+		// Don't SHOW the catch-up. A watcher joining a match ten minutes in used
+		// to watch those ten minutes replay at double speed before arriving at
+		// the present; now the first frame it draws is the one it has caught up
+		// to, which is what Slippi's own replays do when they seek.
+		//
+		// ⚠ The catch-up itself is NOT touched. Its two-simulated-to-one-drawn
+		// ration is load-bearing - see the note above - so this withholds the
+		// present and nothing else.
+		g_slippi_hide_frames = behind > 10;
 		if ((frame % 60) == 0)
 			WARN_LOG(SLIPPI_ONLINE, "[Watch] frame %d, live %d, %d behind, %s", frame, watch_client->LatestFrame(),
 			         behind, behind > 10 ? "catching up" : "level");
 		return behind > 10 && (frame % 2) == 0;
 	}
 	setCatchUpSpeed(false);
+	g_slippi_hide_frames = false;   // a player is never hidden from
 
 	// If the opponent is a bot running ahead to give us more inputs, we should
 	// just keep going at our own pace rather than trying to catch up.
@@ -4056,6 +4070,15 @@ void doConnectionCleanup(std::unique_ptr<SlippiMatchmaking> mm, std::unique_ptr<
 void CEXISlippi::handleConnectionCleanup()
 {
 	ERROR_LOG(SLIPPI_ONLINE, "Connection cleanup started...");
+
+	// ⚠ Whatever else happens, start drawing again.
+	//
+	// g_slippi_hide_frames is set from the per-frame poll, so a watcher that
+	// drops DURING its catch-up stops being polled with the flag still on -
+	// and the screen would then stay black for ever, with the emulator
+	// running perfectly behind it. That failure is indistinguishable from a
+	// hang, which is a mistake this project has already made once tonight.
+	g_slippi_hide_frames = false;
 
 	// Handle destructors in a separate thread to not block the main thread
 	s_rooms_cleanup_busy.store(true);

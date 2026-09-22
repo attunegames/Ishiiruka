@@ -847,6 +847,14 @@ void Renderer::RecordVideoMemory()
 }
 
 
+// Set while a spectator is catching up to a match already in progress.
+//
+// ⚠ This withholds the PRESENT only. The catch-up itself is untouched -
+// it was verified working and its ration of two frames simulated to one drawn
+// is load-bearing, per the note on shouldAdvanceOnlineFrame. Every frame is
+// still simulated and still writes its XFB; it simply is not shown.
+bool g_slippi_hide_frames = false;
+
 void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const EFBRectangle& rc, u64 ticks, float Gamma)
 {
 	// Heuristic to detect if a GameCube game is in 16:9 anamorphic widescreen mode.
@@ -866,7 +874,14 @@ void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const 
 	}
 
 	// TODO: merge more generic parts into VideoCommon
-	SwapImpl(xfbAddr, fbWidth, fbStride, fbHeight, rc, ticks, Gamma);
+	//
+	// ⚠ SwapImpl is the only part of this function that puts a frame on
+	// screen; everything around it is bookkeeping - the aspect-ratio heuristic,
+	// the FPS counter, the frame count, the XFB callback - and all of that has
+	// to keep running or a spectator arrives with the emulator's idea of the
+	// frame rate and the aspect ratio hours out of date.
+	if (!g_slippi_hide_frames)
+		SwapImpl(xfbAddr, fbWidth, fbStride, fbHeight, rc, ticks, Gamma);
 
 	if (m_xfb_written)
 		m_fps_counter.Update();
