@@ -75,6 +75,27 @@ void SlippiMatchmaking::FindMatch(MatchSearchSettings settings)
 	// The thread has already left its loop by the time we are called
 	// (IsSearching() goes false as soon as a match is made or errors out), so
 	// this join returns immediately rather than stalling the caller.
+	//
+	// ⚠ EXCEPT WHEN IT HAS NOT, which froze a room on 2026-09-21. Slippi's
+	// server can accept a ticket and then never assign it - there is no timeout
+	// on that path at all - so the thread sits in its loop printing "Have not
+	// yet received assignment" for ever and IsSearching() stays TRUE.
+	//
+	// FindMatch runs on the GAME thread, out of the EXI handler. Joining a
+	// search that is never going to end therefore stops emulation dead while
+	// the matchmaking thread happily keeps logging - a game frozen solid beside
+	// a log file that is still scrolling, which is exactly how it presented.
+	//
+	// So: never block on a search still in flight. Say so and leave it running.
+	// The room has its own retry and its own "Slippi could not connect us", and
+	// both are better than a hang the player cannot get out of.
+	if (IsSearching())
+	{
+		WARN_LOG(SLIPPI_ONLINE, "[Matchmaking] already searching - not starting another. "
+		                        "The previous ticket was accepted and never assigned.");
+		return;
+	}
+
 	if (m_matchmakeThread.joinable())
 		m_matchmakeThread.join();
 
