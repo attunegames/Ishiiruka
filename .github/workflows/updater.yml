@@ -1,0 +1,44 @@
+# Builds the little updater a tester double-clicks.
+#
+# Separate from the Dolphin workflows on purpose: it is one .cpp with no
+# dependencies beyond Windows itself, it takes seconds, and it must not be
+# entangled with a 25-minute Dolphin build when the point of it is quick turnaround.
+name: Updater
+
+on:
+  push:
+    paths:
+      - 'Rooms/dist/updater/**'
+      - '.github/workflows/updater.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # /MT so there is no Visual C++ runtime to install. A tester downloads a
+      # zip and double-clicks; anything that pops up a "missing DLL" box has
+      # failed at the one job it has.
+      - name: Build
+        shell: cmd
+        run: |
+          cl /nologo /O2 /MT /EHsc /W3 /DUNICODE /D_UNICODE ^
+             /Fe:"Update Peppy.exe" Rooms\dist\updater\update.cpp ^
+             /link /SUBSYSTEM:CONSOLE
+
+      - name: Show what came out
+        shell: bash
+        run: |
+          ls -la "Update Peppy.exe"
+          echo "md5: $(md5sum "Update Peppy.exe" | cut -c1-8)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater
+          path: Update Peppy.exe
