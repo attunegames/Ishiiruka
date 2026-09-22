@@ -132,8 +132,7 @@ static std::string InstalledVersion()
 	if (at == std::string::npos)
 		return "";
 	at += 8;
-	size_t end = text.find_first_of("
-", at);
+	size_t end = text.find_first_of("\r\n", at);
 	return Trim(text.substr(at, end == std::string::npos ? end : end - at));
 }
 
@@ -158,26 +157,16 @@ static void WriteVersionFile(const std::string &version,
 
 	char out[1024];
 	int n = sprintf_s(out, sizeof(out),
-	    "Peppy Dolphin - build identity
-"
-	    "
-"
-	    "  version  %s
-"
-	    "  exe      %s
-"
-	    "  codeset  %s
-"
-	    "  module   %s
-"
-	    "  updated  %04d-%02d-%02d %02d:%02d
-"
-	    "
-"
-	    "If you are reporting something, paste these lines. They say exactly which
-"
-	    "binaries you are running, which the release page alone cannot.
-",
+	    "Peppy Dolphin - build identity\r\n"
+	    "\r\n"
+	    "  version  %s\r\n"
+	    "  exe      %s\r\n"
+	    "  codeset  %s\r\n"
+	    "  module   %s\r\n"
+	    "  updated  %04d-%02d-%02d %02d:%02d\r\n"
+	    "\r\n"
+	    "If you are reporting something, paste these lines. They say exactly which\r\n"
+	    "binaries you are running, which the release page alone cannot.\r\n",
 	    version.c_str(), exe.c_str(), codeset.c_str(), module_.c_str(),
 	    t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute);
 
