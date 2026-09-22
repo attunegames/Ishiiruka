@@ -3443,6 +3443,70 @@ void CEXISlippi::prepareRoomLeaveTraining()
 // that arrives out of turn, so a client that asks early changes nothing and
 // its own screen simply does not move - the same shape as SetStageDraft for
 // somebody who is not the owner.
+// The room's picks, handed to the match the way the character select would.
+//
+// ⚠️ Only when the room does NOT draft its stages. A drafting room still
+// goes to the draft, and the draft sends its own selections - sending ours as
+// well would be two answers to one question.
+//
+// ⚠️ ONCE per match_id. This goes out over the wire, and the room state it
+// is driven from is asked for twice a second, so without the guard every read
+// would re-send. A re-send after the opponent has merged the first is a
+// different match on their machine than on ours.
+bool CEXISlippi::roomSetMatchSelections(const Rooms::State &s)
+{
+	if (s.stage_draft)
+		return false;        // the draft will do it
+	if (isWatching())
+		return false;        // a watcher picks nothing
+	if (s.match_id.empty())
+		return false;
+	if (m_room_match_set == s.match_id)
+		return true;         // already done for this one
+	if (!s.ready || !slippi_netplay)
+		return false;
+	if (!matchmaking || matchmaking->GetMatchmakeState() != SlippiMatchmaking::CONNECTION_SUCCESS)
+		return false;
+
+	int ch = s.is_host ? s.draft.host_char : s.draft.guest_char;
+	int col = s.is_host ? s.draft.host_color : s.draft.guest_color;
+
+	// ⚠️ Wait for the REVEAL. pd_tick masks a random pick until the pairing
+	// is ready, and the very tick that flips it to ready is still masked - the
+	// state is read before that update runs. So the real fighter arrives one
+	// tick later, and sending the question mark in the meantime would put a
+	// character that does not exist into the match.
+	if (ch == Rooms::Draft::NOT_PICKED || ch == Rooms::Draft::RANDOM)
+		return false;
+
+	SlippiPlayerSelections sel;
+	sel.teamId = 0;
+	sel.characterId = (u8)ch;
+	sel.characterColor = (u8)col;
+	sel.isCharacterSelected = true;
+
+	// ⚠️ Exactly ONE side names the stage. getRandomStage() rolls LOCALLY, so
+	// if both sent one the two clients would start different matches. pd_tick
+	// already decides which of the two picks stages - the guest - and that is
+	// the same answer on both machines, which is the whole point of asking it
+	// rather than each side deciding for itself.
+	if (!s.is_host)
+	{
+		sel.stageId = getRandomStage();
+		sel.isStageSelected = true;
+	}
+
+	sel.rngOffset = generator() % 0xFFFF;
+
+	localSelections.Merge(sel);
+	slippi_netplay->SetMatchSelections(localSelections);
+	m_room_match_set = s.match_id;
+
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] match %s set from the room: character %d colour %d%s",
+	         s.match_id.c_str(), ch, col, s.is_host ? "" : " (and the stage)");
+	return true;
+}
+
 void CEXISlippi::handleRoomPick(u8 *payload)
 {
 	u8 character = payload[0];
@@ -3831,6 +3895,20 @@ void CEXISlippi::prepareRoomState()
 	m_read_queue.push_back((u8)s.draft.pick_turn);
 	m_read_queue.push_back((u8)std::min(s.draft.pick_ends_in, 255));
 	m_read_queue.push_back(s.draft.pick_is_mine ? 1 : 0);
+
+	// ROOM_STATE_MATCH_SET / _MY_PORT.
+	//
+	// ⚠️ The send happens HERE, on a read, which is not where side effects
+	// belong. It is here because this is the only thing the room asks for
+	// while it waits, and the selections have to be in before the module
+	// leaves for the splash - once it goes, nothing asks again. Guarded by
+	// match_id so the repetition is harmless.
+	m_read_queue.push_back(roomSetMatchSelections(s) ? 1 : 0);
+
+	u8 my_port = ROOM_PORT_NONE;
+	if (slippi_netplay)
+		my_port = slippi_netplay->IsDecider() ? 0 : 1;
+	m_read_queue.push_back(my_port);
 }
 
 

@@ -133,7 +133,24 @@
 // and "chose random" are different states and the box draws them differently.
 #define ROOM_CHAR_RANDOM 0xFE
 
-#define ROOM_STATE_SIZE (ROOM_STATE_PICK_MINE + 1)
+// The room has handed this match its characters - the module may go.
+//
+// ⚠️ Needed because the room CANNOT work this out for itself. A random
+// pick is masked until the pairing is ready, so there is a window where the
+// match is on and the fighter is still a question mark; going then would
+// start a match with a character that does not exist.
+#define ROOM_STATE_MATCH_SET (ROOM_STATE_PICK_MINE + 1)
+
+// Which netplay port is OURS, 0 or 1, or 0xFF when there is no match.
+//
+// ⚠️ A room skips the character select, and the character select is what
+// normally writes the 1P port. Without this the scene decide has nothing to
+// write it from, and Melee reads whatever was last there - which for anyone
+// who has watched a match is the watcher's port, a port not in the game.
+#define ROOM_STATE_MY_PORT   (ROOM_STATE_MATCH_SET + 1)
+#define ROOM_PORT_NONE       0xFF
+
+#define ROOM_STATE_SIZE (ROOM_STATE_MY_PORT + 1)
 
 // Bit 2 of the flags byte: the pairing is on and the game should go and
 // connect. Distinct from PLAYING, which means a match is already under way.
@@ -202,6 +219,11 @@
 extern bool g_needInputForFrame;
 
 // Emulated Slippi device used to receive and respond to in-game messages
+namespace Rooms
+{
+struct State;
+}
+
 class CEXISlippi : public IEXIDevice
 {
   public:
@@ -503,6 +525,11 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomLeave(u8 *payload);
 	void handleRoomStageDraft(u8 *payload);
 	void handleRoomPick(u8 *payload);
+	bool roomSetMatchSelections(const Rooms::State &s);
+
+	// The match whose selections the room has already sent. Keyed by id
+	// rather than a bool so a new pairing resets it by being new.
+	std::string m_room_match_set;
 	void prepareRoomDraftDrive();
 	void prepareRoomLeaveTraining();
 	void punchAtWatchers();
