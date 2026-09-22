@@ -21,6 +21,7 @@
 
 #include <string>
 #include <vector>
+#include <utility>
 #include <cstdio>
 
 #pragma comment(lib, "winhttp.lib")
@@ -106,6 +107,87 @@ static std::string Md5Short(const std::string &path)
 		CryptReleaseContext(prov, 0);
 	CloseHandle(f);
 	return out;
+}
+
+// What VERSION.txt says this folder currently is, or "" if it cannot tell.
+//
+// ⚠ A tester is asked to paste VERSION.txt when reporting, so it has to stay
+// TRUE after an update. The first cut of this updater replaced the three files
+// and left VERSION.txt untouched, which meant the one instrument we ask people
+// to read would confidently report the build they used to have.
+static std::string InstalledVersion()
+{
+	HANDLE f = CreateFileA("VERSION.txt", GENERIC_READ, FILE_SHARE_READ, nullptr,
+	                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (f == INVALID_HANDLE_VALUE)
+		return "";
+	char buf[4096];
+	DWORD got = 0;
+	ReadFile(f, buf, sizeof(buf) - 1, &got, nullptr);
+	CloseHandle(f);
+	buf[got] = 0;
+
+	std::string text(buf, got);
+	size_t at = text.find("version ");
+	if (at == std::string::npos)
+		return "";
+	at += 8;
+	size_t end = text.find_first_of("
+", at);
+	return Trim(text.substr(at, end == std::string::npos ? end : end - at));
+}
+
+// Rewrite VERSION.txt so it describes what is now on disk.
+static void WriteVersionFile(const std::string &version,
+                             const std::vector<std::pair<std::string, std::string>> &files)
+{
+	std::string exe = "?", codeset = "?", module_ = "?";
+	for (size_t i = 0; i < files.size(); i++)
+	{
+		const std::string &path = files[i].first;
+		if (path.find("Dolphin.exe") != std::string::npos)
+			exe = files[i].second;
+		else if (path.find("GALE01r2.ini") != std::string::npos)
+			codeset = files[i].second;
+		else if (path.find("SlippiRoom.dat") != std::string::npos)
+			module_ = files[i].second;
+	}
+
+	SYSTEMTIME t;
+	GetLocalTime(&t);
+
+	char out[1024];
+	int n = sprintf_s(out, sizeof(out),
+	    "Peppy Dolphin - build identity
+"
+	    "
+"
+	    "  version  %s
+"
+	    "  exe      %s
+"
+	    "  codeset  %s
+"
+	    "  module   %s
+"
+	    "  updated  %04d-%02d-%02d %02d:%02d
+"
+	    "
+"
+	    "If you are reporting something, paste these lines. They say exactly which
+"
+	    "binaries you are running, which the release page alone cannot.
+",
+	    version.c_str(), exe.c_str(), codeset.c_str(), module_.c_str(),
+	    t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute);
+
+	HANDLE f = CreateFileA("VERSION.txt", GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+	                       FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (f == INVALID_HANDLE_VALUE)
+		return;
+	DWORD wrote = 0;
+	WriteFile(f, out, (DWORD)n, &wrote, nullptr);
+	CloseHandle(f);
 }
 
 // One HTTPS GET, following redirects - which matters, because a GitHub release
@@ -268,6 +350,12 @@ int main()
 		return 1;
 	}
 
+	std::string installed = InstalledVersion();
+	if (installed.empty())
+		Say("This folder does not say which build it is. Carrying on anyway.");
+	else
+		Say("You are on %s", installed.c_str());
+	Say("");
 	Say("Checking for a newer build...");
 	std::string manifest;
 	if (!Fetch(MANIFEST_URL, manifest))
@@ -280,6 +368,7 @@ int main()
 	// One file per line:  path|md5-8|url        (# starts a comment)
 	// The path uses backslashes and may contain spaces, hence the pipes.
 	std::string version;
+	std::vector<std::pair<std::string, std::string> > seen;
 	int changed = 0, failed = 0, already = 0;
 
 	size_t pos = 0;
@@ -297,7 +386,12 @@ int main()
 		if (line.rfind("version ", 0) == 0)
 		{
 			version = Trim(line.substr(8));
-			Say("Latest is %s", version.c_str());
+			if (!installed.empty() && installed == version)
+				Say("Latest is %s - same as yours.", version.c_str());
+			else
+				Say("Latest is %s%s%s", version.c_str(),
+				    installed.empty() ? "" : " - updating from ",
+				    installed.empty() ? "" : installed.c_str());
 			Say("");
 			continue;
 		}
@@ -313,6 +407,8 @@ int main()
 		std::string path = Trim(rest.substr(0, b1));
 		std::string want = Trim(rest.substr(b1 + 1, b2 - b1 - 1));
 		std::string url = Trim(rest.substr(b2 + 1));
+
+		seen.push_back(std::make_pair(path, want));
 
 		std::string have = Md5Short(path);
 		if (have == want)
@@ -336,6 +432,16 @@ int main()
 			changed++;
 		else
 			failed++;
+	}
+
+	// ⚠ Only when everything landed. A half-applied update must not claim to
+	// be the new build - that would be a worse lie than the stale one.
+	if (changed > 0 && failed == 0 && !version.empty())
+	{
+		WriteVersionFile(version, seen);
+		Say("");
+		Say("VERSION.txt now reads %s - that is what to paste when reporting.",
+		    version.c_str());
 	}
 
 	Say("");
