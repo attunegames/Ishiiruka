@@ -31,7 +31,10 @@
 // downloaded is checked against a hash that came from here, so a truncated or
 // tampered download is discarded rather than installed.
 static const wchar_t *MANIFEST_URL =
-    L"https://raw.githubusercontent.com/attunegames/peppy-dolphin/rooms-wip/Rooms/dist/latest.txt";
+    // ⚠ The BRANCH lives on the Ishiiruka fork; only the RELEASES are on
+// peppy-dolphin. Pointing this at peppy-dolphin gave a 404 on the very first
+// end-to-end run, with the three downloads all answering 200 beside it.
+L"https://raw.githubusercontent.com/attunegames/Ishiiruka/rooms-wip/Rooms/dist/latest.txt";
 
 // ---------------------------------------------------------------- utilities
 
