@@ -9,7 +9,12 @@
 
 param(
     [Parameter(Mandatory = $true)][string] $Rig,
-    [Parameter(Mandatory = $true)][string] $Out
+    [Parameter(Mandatory = $true)][string] $Out,
+    # ⚠️ The release tag this zip is going out as, written into VERSION.txt
+    # so a freshly unzipped folder knows what it is. The updater reads it to say
+    # "you are on X, updating to Y", and rewrites it afterwards. Left out, a
+    # folder cannot name itself and the updater just says so.
+    [string] $Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -120,13 +125,14 @@ $hash = {
 $verLines = @(
     "Peppy Dolphin - build identity",
     "",
+    ("  version  " + $(if ($Version) { $Version } else { "unreleased" })),
     ("  exe      " + (& $hash 'Slippi Dolphin.exe')),
     ("  codeset  " + (& $hash 'Sys\GameSettings\GALE01r2.ini')),
     ("  module   " + (& $hash 'Sys\GameFiles\GALE01\SlippiRoom.dat')),
     ("  packed   " + (Get-Date -Format 'yyyy-MM-dd HH:mm')),
     "",
-    "If you are reporting something, paste these three lines. They say exactly",
-    "which binaries you are running, which the release page alone cannot."
+    "If you are reporting something, paste these lines. They say exactly which",
+    "binaries you are running, which the release page alone cannot."
 )
 Set-Content -Path (Join-Path $pkg "VERSION.txt") -Value $verLines -Encoding utf8
 
