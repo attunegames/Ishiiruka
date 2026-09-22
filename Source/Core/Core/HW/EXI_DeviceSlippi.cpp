@@ -3431,6 +3431,27 @@ void CEXISlippi::prepareRoomLeaveTraining()
 	m_read_queue.push_back(leave ? 1 : 0);
 }
 
+// A character chosen on the ROOM screen, before the draft and before the
+// match exists.
+//
+// ⚠️ Reported with NO STAGE, which ReportPick is already written for -
+// NOT_PICKED there means "nothing to say about this one", not "clear it".
+// Sending a stage of 0 instead would publish Fountain of Dreams as this
+// match's stage the moment somebody chose a fighter.
+//
+// ⚠️ The SERVER decides whether this is allowed. pd_tick drops a pick
+// that arrives out of turn, so a client that asks early changes nothing and
+// its own screen simply does not move - the same shape as SetStageDraft for
+// somebody who is not the owner.
+void CEXISlippi::handleRoomPick(u8 *payload)
+{
+	u8 character = payload[0];
+	u8 color = payload[1];
+	WARN_LOG(SLIPPI_ONLINE, "[Rooms] picked character %d colour %d in the room",
+	         character, color);
+	Rooms::ReportPick(character, color, Rooms::Draft::NOT_PICKED);
+}
+
 void CEXISlippi::handleRoomStageDraft(u8 *payload)
 {
 	bool on = payload[0] != 0;
@@ -3799,6 +3820,17 @@ void CEXISlippi::prepareRoomState()
 	};
 	put_fixed(s.room, ROOM_STATE_CODE_LEN);
 	put_fixed(s.passcode, ROOM_STATE_PASS_LEN);
+
+	// ROOM_STATE_PICK_TURN / _SECS / _MINE.
+	//
+	// ⚠️ pick_is_mine comes from the SERVER rather than being worked out
+	// here from is_host. Which of the two is picking depends on which columns
+	// are still null, and pd_tick is the only thing that sees them both at
+	// once - deciding it locally means deciding it from a tick that may be two
+	// seconds behind the one that moved the turn on.
+	m_read_queue.push_back((u8)s.draft.pick_turn);
+	m_read_queue.push_back((u8)std::min(s.draft.pick_ends_in, 255));
+	m_read_queue.push_back(s.draft.pick_is_mine ? 1 : 0);
 }
 
 
@@ -4620,6 +4652,9 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_ROOM_QUEUE:
 			handleRoomQueue(&memPtr[bufLoc + 1]);
+			break;
+		case CMD_ROOM_PICK:
+			handleRoomPick(&memPtr[bufLoc + 1]);
 			break;
 		case CMD_ROOM_STAGE_DRAFT:
 			handleRoomStageDraft(&memPtr[bufLoc + 1]);

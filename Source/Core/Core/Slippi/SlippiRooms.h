@@ -119,6 +119,23 @@ struct Draft
 	// are about to play" and "these two are playing", which is what decides
 	// whether the band shows two fighters or stays empty.
 	bool playing = false;
+
+	// Whose box is open: 0 the winner of the last game, 1 the challenger,
+	// 2 nobody. Derived server-side from which character columns are still
+	// empty, so it cannot disagree with the picks themselves.
+	static constexpr int TURN_NOBODY = 2;
+	int pick_turn = TURN_NOBODY;
+
+	// Seconds left on that box when this tick was answered.
+	int pick_ends_in = 0;
+
+	// ...and whether it is ours.
+	bool pick_is_mine = false;
+
+	// The question mark. ⚠️ A random pick is MASKED by pd_tick until the
+	// match is on, so this is what arrives for one - the real fighter has
+	// already been rolled and stored, and nobody is shown it until the splash.
+	static constexpr int RANDOM = 254;
 };
 
 struct State

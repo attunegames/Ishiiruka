@@ -613,6 +613,16 @@ void ReadReply(const json &j, Rooms::State &s)
 		s.draft.host_color = d->value("hostColor", 0);
 		s.draft.guest_color = d->value("guestColor", 0);
 		s.draft.playing = d->value("playing", false);
+		s.draft.pick_turn = d->value("pickTurn", Draft::TURN_NOBODY);
+		// ⚠️ null when nobody is on the clock, which nlohmann will not give
+		// to an int - value() returns the default only for a MISSING key, not a
+		// null one, and reads a null as a type error.
+		{
+			auto e = d->find("pickEndsIn");
+			s.draft.pick_ends_in =
+			    (e != d->end() && !e->is_null()) ? e->get<int>() : 0;
+		}
+		s.draft.pick_is_mine = d->value("pickIsMine", false);
 	}
 
 }

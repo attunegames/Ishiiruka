@@ -112,7 +112,28 @@
 #define ROOM_STATE_PASS   (ROOM_STATE_CODE + ROOM_STATE_CODE_LEN)
 #define ROOM_STATE_PASS_LEN 8
 
-#define ROOM_STATE_SIZE (ROOM_STATE_PASS + ROOM_STATE_PASS_LEN)
+// Who is choosing a character, how long they have left, and whether it is
+// the reader. 0 the winner of the last game, 1 the challenger, 2 nobody -
+// either both are in, or there is no pairing to pick for.
+//
+// ⚠️ On the END of the block, not in the header. Bytes 0x00 to 0x0B are
+// all spoken for - the layout comment calls 0x09 padding and it has not been
+// padding since ban_first took it.
+//
+// ⚠️ PICK_SECS is what is LEFT, sampled when the tick came back, and the
+// room ticks every two seconds. The screen must count down between ticks on
+// its own or the clock jumps two at a time.
+#define ROOM_STATE_PICK_TURN (ROOM_STATE_PASS + ROOM_STATE_PASS_LEN)
+#define ROOM_STATE_PICK_SECS (ROOM_STATE_PICK_TURN + 1)
+#define ROOM_STATE_PICK_MINE (ROOM_STATE_PICK_SECS + 1)
+
+#define ROOM_PICK_TURN_NOBODY 2
+
+// The question mark. ⚠️ Distinct from ROOM_NOT_PICKED: "has not chosen"
+// and "chose random" are different states and the box draws them differently.
+#define ROOM_CHAR_RANDOM 0xFE
+
+#define ROOM_STATE_SIZE (ROOM_STATE_PICK_MINE + 1)
 
 // Bit 2 of the flags byte: the pairing is on and the game should go and
 // connect. Distinct from PLAYING, which means a match is already under way.
@@ -264,6 +285,18 @@ class CEXISlippi : public IEXIDevice
 		CMD_ROOM_DRAFT_DRIVE = 0xCE, // read back: what the pad should do in the draft
 		CMD_ROOM_LEAVE_TRAIN = 0xCF, // read back: should practice end, the match is on
 
+		// A character chosen in the ROOM, rather than in the draft.
+		//
+		// ⚠️ NOT in the 0xC5-0xCF block with the rest of Rooms, because that
+		// block is now FULL - 0xCF was the last of it. Slippi's own ids run to
+		// 0xC4 and resume at 0xD1, but they also stop at 0x8A and restart at
+		// 0xB0, and this sits in the middle of that second gap where there is
+		// the most room on either side for both projects to grow.
+		//
+		// ⚠️ The next one of ours needs the same thought. There is no room
+		// left beside its neighbours.
+		CMD_ROOM_PICK = 0xA0,
+
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
 		CMD_FILE_LENGTH = 0xD1,
@@ -365,6 +398,7 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_ROOM_STAGE_DRAFT, 0x1},  // one byte: the setting we want
 	    {CMD_ROOM_DRAFT_DRIVE, 0x0},  // no payload - the answer is one byte
 	    {CMD_ROOM_LEAVE_TRAIN, 0x0},  // no payload - the answer is one byte
+	    {CMD_ROOM_PICK, 0x2},         // character, then costume
 
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
 	    {CMD_FILE_LENGTH, 0x40},
@@ -468,6 +502,7 @@ class CEXISlippi : public IEXIDevice
 	void handleRoomWatch();
 	void handleRoomLeave(u8 *payload);
 	void handleRoomStageDraft(u8 *payload);
+	void handleRoomPick(u8 *payload);
 	void prepareRoomDraftDrive();
 	void prepareRoomLeaveTraining();
 	void punchAtWatchers();
