@@ -94,6 +94,20 @@ if (Test-Path $ini) {
 # The README that ships is the one in this folder, not whatever the rig had.
 Copy-Item (Join-Path $PSScriptRoot "README.txt") (Join-Path $pkg "README.txt") -Force
 
+# The updater a tester double-clicks, built by the Updater workflow and dropped
+# here. Optional: if it is missing the zip is still perfectly usable, it just
+# means people unzip the next beta by hand.
+#
+# ⚠️ It is NOT in the rig, deliberately - the rigs are updated with
+# deploy.sh and pointing an updater at them would fight that.
+$upd = Join-Path $PSScriptRoot "updater\Update Peppy.exe"
+if (Test-Path $upd) {
+    Copy-Item $upd (Join-Path $pkg "Update Peppy.exe") -Force
+    Write-Host "  included the updater" -ForegroundColor DarkGray
+} else {
+    Write-Host "  NO UPDATER - build the Updater workflow and put it in dist\updater\" -ForegroundColor Yellow
+}
+
 # ⚠️ Which build this is, inside the zip, where a tester can read it back to you.
 # The first beta replaced its own asset four times under one filename, so nobody
 # - including us - could tell which binary somebody was running. The first
