@@ -34,6 +34,7 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		    {"p_listed", info.listed},
 		    {"p_password", info.password.empty() ? json(nullptr) : json(info.password)},
 		    {"p_host_name", info.hostName},
+		    {"p_host_code", info.hostCode},
 		    {"p_mode", info.mode},
 		    {"p_stage_mode", info.stageMode},
 		    {"p_capacity", info.capacity},
@@ -49,11 +50,54 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		return reg;
 	}
 
-	bool Heartbeat(const Registration &reg, u8 memberCount) override
+	ActivityStatus Activity(const Registration &reg, u8 memberCount) override
 	{
 		json args = {{"p_code", reg.code}, {"p_host_token", reg.hostToken}, {"p_member_count", memberCount}};
 		json resp;
-		return call("room_heartbeat", args, resp) && resp.is_boolean() && resp.get<bool>();
+		if (!call("room_activity", args, resp) || !resp.is_string())
+			return ActivityStatus::UNAVAILABLE;
+
+		std::string status = resp.get<std::string>();
+		if (status == "gone")
+			return ActivityStatus::GONE;
+		if (status == "replaced")
+			return ActivityStatus::REPLACED;
+		return ActivityStatus::OK;
+	}
+
+	TakeOverResult TakeOver(const std::string &code, int generation, const RoomInfo &info) override
+	{
+		json args = {
+		    {"p_code", code},
+		    {"p_generation", generation},
+		    {"p_port", info.port},
+		    {"p_host_name", info.hostName},
+		    {"p_host_code", info.hostCode},
+		};
+
+		TakeOverResult result;
+		json resp;
+		if (!call("room_take_over", args, resp) || !resp.is_array() || resp.empty())
+			return result;
+
+		std::string status = resp[0].value("status", "");
+		if (status == "ok")
+		{
+			result.status = TakeOverStatus::OK;
+			result.reg.code = code;
+			result.reg.hostToken = resp[0].value("host_token", "");
+			result.generation = resp[0].value("generation", 0);
+		}
+		else if (status == "taken")
+		{
+			result.status = TakeOverStatus::TAKEN;
+			result.generation = resp[0].value("generation", 0);
+		}
+		else if (status == "gone")
+		{
+			result.status = TakeOverStatus::GONE;
+		}
+		return result;
 	}
 
 	void Unregister(const Registration &reg) override
@@ -78,6 +122,8 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 			result.status = JoinStatus::OK;
 			result.address = resp[0].value("address", "");
 			result.hostName = resp[0].value("host_name", "");
+			result.hostCode = resp[0].value("host_code", "");
+			result.generation = resp[0].value("generation", 0);
 		}
 		else if (status == "not_found")
 			result.status = JoinStatus::NOT_FOUND;
@@ -164,7 +210,8 @@ class NoRoomDirectory : public SlippiRoomDirectory
 {
   public:
 	Registration Register(const RoomInfo &info) override { return {}; }
-	bool Heartbeat(const Registration &reg, u8 memberCount) override { return false; }
+	ActivityStatus Activity(const Registration &reg, u8 memberCount) override { return ActivityStatus::UNAVAILABLE; }
+	TakeOverResult TakeOver(const std::string &code, int generation, const RoomInfo &info) override { return {}; }
 	void Unregister(const Registration &reg) override {}
 	JoinResult Join(const std::string &code, const std::string &password) override { return {}; }
 	bool List(std::vector<Listing> &out) override { return false; }

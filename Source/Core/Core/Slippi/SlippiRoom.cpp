@@ -22,8 +22,11 @@ SlippiRoom::SlippiRoom(const SlippiExiTypes::CreateRoomQuery &query)
 {
 	visibility = query.visibility;
 	mode = query.mode;
-	capacity = query.capacity;
 	stageMode = query.stage_mode;
+
+	// A room holds at most the members the game can be sent
+	int maxMembers = MAX_MEMBERS;
+	capacity = static_cast<u8>(std::max(2, std::min<int>(query.capacity, maxMembers)));
 
 	// Only private rooms have a password
 	if (visibility != 0)
@@ -43,9 +46,26 @@ int SlippiRoom::AddMember(const std::string &name, const std::string &connectCod
 	m.charId = charId;
 	m.charColor = charColor;
 	members.push_back(m);
+	int member = static_cast<int>(members.size()) - 1;
+	activityCount++;
 
 	INFO_LOG(SLIPPI_ONLINE, "[Room] %s joined the room", connectCode.c_str());
-	return static_cast<int>(members.size()) - 1;
+
+	// A player who dropped keeps their crowns if they're back in time, and goes to the back of the queue
+	for (size_t i = 0; i < dropped.size(); i++)
+	{
+		if (dropped[i].connectCode != connectCode)
+			continue;
+
+		members[member].crowns = dropped[i].crowns;
+		bool wasQueued = dropped[i].wasQueued;
+		dropped.erase(dropped.begin() + i);
+		if (wasQueued)
+			joinQueue(member);
+		break;
+	}
+
+	return member;
 }
 
 // Everything that refers to a member by index is shifted down past the one that left
@@ -55,6 +75,7 @@ void SlippiRoom::RemoveMember(int member)
 		return;
 
 	INFO_LOG(SLIPPI_ONLINE, "[Room] %s left the room", members[member].connectCode.c_str());
+	activityCount++;
 
 	// Leaving ends any set the member is in. The other player stays on as the winner
 	if (isOnSide(member))
@@ -97,6 +118,22 @@ void SlippiRoom::RemoveMember(int member)
 		phaseStartMs = Common::Timer::GetTimeMs();
 }
 
+// Keeps a dropped member's crowns and place in line for a while, in case they come back
+void SlippiRoom::DropMember(int member)
+{
+	if (member < 0 || member >= static_cast<int>(members.size()))
+		return;
+
+	Dropped d;
+	d.connectCode = members[member].connectCode;
+	d.crowns = members[member].crowns;
+	d.wasQueued = queuePos(member) >= 0 || isOnSide(member);
+	d.droppedMs = Common::Timer::GetTimeMs();
+	dropped.push_back(d);
+
+	RemoveMember(member);
+}
+
 // Test players take their own turns
 void SlippiRoom::AddTestPlayer()
 {
@@ -109,7 +146,7 @@ void SlippiRoom::AddTestPlayer()
 	joinQueue(member);
 }
 
-int SlippiRoom::FindMember(const std::string &connectCode)
+int SlippiRoom::FindMember(const std::string &connectCode) const
 {
 	for (size_t i = 0; i < members.size(); i++)
 	{
@@ -126,9 +163,53 @@ int SlippiRoom::MemberCount()
 
 bool SlippiRoom::IsFull()
 {
-	int maxMembers = MAX_MEMBERS;
-	int limit = capacity == 0 ? maxMembers : std::min<int>(capacity, maxMembers);
-	return static_cast<int>(members.size()) >= limit;
+	return static_cast<int>(members.size()) >= capacity;
+}
+
+// A member's copy becomes the running room when they take over as host
+void SlippiRoom::TakeOver(const std::string &newHostCode, HostChange change)
+{
+	u32 now = Common::Timer::GetTimeMs();
+	isCopy = false;
+	phaseStartMs = now;
+
+	// Carry the turn on from where the old host's timer was
+	if (turnSide() != SIDE_NONE)
+		turnStartMs = now - (TURN_SECONDS - std::max(copyTurnSeconds, 0)) * 1000;
+
+	int oldHost = FindMember(hostCode);
+	if (change == HOST_LOST)
+	{
+		returningHostCode = hostCode;
+		returningHostMs = now;
+		DropMember(oldHost);
+	}
+	else if (change == HOST_LEFT)
+	{
+		RemoveMember(oldHost);
+	}
+	else
+	{
+		returningHostCode.clear();
+	}
+
+	hostCode = newHostCode;
+}
+
+std::vector<std::string> SlippiRoom::Successors()
+{
+	std::vector<std::string> codes;
+	for (const Member &m : members)
+	{
+		if (m.connectCode != hostCode && !m.isTestPlayer)
+			codes.push_back(m.connectCode);
+	}
+	return codes;
+}
+
+bool SlippiRoom::IsReturningHost(const std::string &connectCode)
+{
+	return !returningHostCode.empty() && connectCode == returningHostCode;
 }
 
 void SlippiRoom::HandleAction(int member, u8 action, u8 value0, u8 value1)
@@ -208,6 +289,7 @@ void SlippiRoom::Update()
 		return;
 
 	u32 now = Common::Timer::GetTimeMs();
+	expireDropped();
 
 	// Start the set once both sides are filled and the delay has passed
 	if (phase == PHASE_WAITING)
@@ -250,7 +332,19 @@ json SlippiRoom::ToJson()
 		                    {"connectCode", m.connectCode},
 		                    {"char", m.charId},
 		                    {"color", m.charColor},
-		                    {"crowns", m.crowns}});
+		                    {"crowns", m.crowns},
+		                    {"test", m.isTestPlayer}});
+	}
+
+	// Times are sent as ages, since clocks differ between computers
+	u32 now = Common::Timer::GetTimeMs();
+	json jDropped = json::array();
+	for (const Dropped &d : dropped)
+	{
+		jDropped.push_back({{"connectCode", d.connectCode},
+		                    {"crowns", d.crowns},
+		                    {"queued", d.wasQueued},
+		                    {"age", now - d.droppedMs}});
 	}
 
 	return {
@@ -260,7 +354,13 @@ json SlippiRoom::ToJson()
 	    {"stageMode", stageMode},
 	    {"code", roomCode},
 	    {"password", password},
+	    {"host", hostCode},
+	    {"generation", generation},
 	    {"members", jMembers},
+	    {"dropped", jDropped},
+	    {"returningHost", returningHostCode},
+	    {"returningHostAge", now - returningHostMs},
+	    {"beaten", beaten},
 	    {"queue", queue},
 	    {"sides", {sides[0], sides[1]}},
 	    {"streak", streak},
@@ -295,8 +395,27 @@ void SlippiRoom::FromJson(const json &j)
 		m.charId = jm.value("char", static_cast<int>(CHAR_RANDOM));
 		m.charColor = jm.value("color", 0);
 		m.crowns = jm.value("crowns", 0);
+		m.isTestPlayer = jm.value("test", false);
 		members.push_back(m);
 	}
+
+	u32 now = Common::Timer::GetTimeMs();
+	dropped.clear();
+	for (const json &jd : j.value("dropped", json::array()))
+	{
+		Dropped d;
+		d.connectCode = jd.value("connectCode", "");
+		d.crowns = jd.value("crowns", 0);
+		d.wasQueued = jd.value("queued", false);
+		d.droppedMs = now - jd.value("age", 0u);
+		dropped.push_back(d);
+	}
+
+	hostCode = j.value("host", "");
+	generation = j.value("generation", 0);
+	returningHostCode = j.value("returningHost", "");
+	returningHostMs = now - j.value("returningHostAge", 0u);
+	beaten = j.value("beaten", 0u);
 
 	queue = j.value("queue", std::vector<int>());
 	std::vector<int> jSides = j.value("sides", std::vector<int>{-1, -1});
@@ -367,6 +486,9 @@ SlippiExiTypes::GetRoomStateResponse SlippiRoom::GetState(int localMember)
 
 	int seconds = turnSeconds();
 	resp.turn_seconds = seconds < 0 ? 0xFF : static_cast<u8>(seconds);
+
+	int host = FindMember(hostCode);
+	resp.host_member = host < 0 ? 0xFF : static_cast<u8>(host);
 
 	return resp;
 }
@@ -626,4 +748,17 @@ u8 SlippiRoom::maxColors(u8 charId)
 	static const u8 counts[CHAR_RANDOM] = {6, 5, 4, 4, 6, 4, 5, 4, 5, 5, 4, 4, 5,
 	                                       4, 4, 5, 5, 6, 5, 5, 4, 5, 5, 5, 4, 5};
 	return charId < CHAR_RANDOM ? counts[charId] : 1;
+}
+
+void SlippiRoom::expireDropped()
+{
+	u32 now = Common::Timer::GetTimeMs();
+	for (size_t i = dropped.size(); i-- > 0;)
+	{
+		if (now - dropped[i].droppedMs >= REJOIN_WINDOW_MS)
+			dropped.erase(dropped.begin() + i);
+	}
+
+	if (!returningHostCode.empty() && now - returningHostMs >= REJOIN_WINDOW_MS)
+		returningHostCode.clear();
 }

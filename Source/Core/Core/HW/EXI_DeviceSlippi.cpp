@@ -9,6 +9,7 @@
 #include "Core/Slippi/SlippiReplayComm.h"
 #include <SlippiLib/SlippiGame.h>
 
+#include <ctime>
 #include <semver/include/semver200.h>
 #include <utility> // std::move
 
@@ -3384,14 +3385,40 @@ void CEXISlippi::handleCreateRoom(const SlippiExiTypes::CreateRoomQuery &query)
 {
 	initEnet();
 	auto userInfo = user->GetUserInfo();
-	room = std::make_unique<SlippiRoomHost>(query, userInfo.displayName, userInfo.connectCode);
+	room = std::make_unique<SlippiRoomHost>(SlippiRoomSession::Identity{userInfo.displayName, userInfo.connectCode},
+	                                        query);
 }
 
 void CEXISlippi::handleJoinRoom(const SlippiExiTypes::JoinRoomQuery &query)
 {
 	initEnet();
 	auto userInfo = user->GetUserInfo();
-	room = std::make_unique<SlippiRoomMember>(query, userInfo.displayName, userInfo.connectCode);
+	room = std::make_unique<SlippiRoomMember>(SlippiRoomSession::Identity{userInfo.displayName, userInfo.connectCode},
+	                                          query);
+}
+
+// The room we're in is saved so it can be rejoined after a crash. Leaving on purpose forgets it
+static std::string lastRoomPath()
+{
+	std::string folder = File::GetSlippiUserConfigFolder();
+	if (!folder.empty() && folder.back() != '/' && folder.back() != '\\')
+		folder += DIR_SEP;
+	return folder + "last-room.json";
+}
+
+void CEXISlippi::saveLastRoom(const SlippiExiTypes::GetRoomStateResponse &state)
+{
+	bool isInRoom = state.connection_status == SlippiRoomSession::STATUS_HOSTING ||
+	                state.connection_status == SlippiRoomSession::STATUS_JOINED;
+	std::string code(state.code, strnlen(state.code, sizeof(state.code)));
+	if (!isInRoom || code.empty() || code == lastRoomCode)
+		return;
+
+	lastRoomCode = code;
+	nlohmann::json j = {{"code", code},
+	                    {"password", std::string(state.password, strnlen(state.password, sizeof(state.password)))},
+	                    {"savedAt", static_cast<s64>(std::time(nullptr))}};
+	File::WriteStringToFile(j.dump(), lastRoomPath());
 }
 
 void CEXISlippi::initEnet()
@@ -3413,7 +3440,10 @@ void CEXISlippi::handleRoomAction(const SlippiExiTypes::RoomActionQuery &query)
 
 	if (query.action == SlippiRoom::ACTION_LEAVE_ROOM)
 	{
+		room->Leave();
 		room = nullptr;
+		lastRoomCode.clear();
+		File::Delete(lastRoomPath());
 		return;
 	}
 
@@ -3432,7 +3462,14 @@ void CEXISlippi::prepareRoomState()
 
 	SlippiExiTypes::GetRoomStateResponse resp = {};
 	if (room)
+	{
+		// The session changes when this player takes over as host or hands the room back
+		if (auto next = room->TakeNext())
+			room = std::move(next);
+
 		resp = room->GetState();
+		saveLastRoom(resp);
+	}
 
 	u8 *data = reinterpret_cast<u8 *>(&resp);
 	m_read_queue.insert(m_read_queue.end(), data, data + sizeof(resp));
@@ -3479,6 +3516,22 @@ void CEXISlippi::prepareRoomList()
 		rl.stage_mode = roomList[i].stageMode;
 		rl.capacity = roomList[i].capacity;
 		rl.member_count = roomList[i].memberCount;
+	}
+
+	// Offer the last room when it was left by a crash rather than on purpose. Rooms with no activity
+	// for an hour are gone anyway
+	std::string contents;
+	if (!room && File::ReadFileToString(lastRoomPath(), contents))
+	{
+		nlohmann::json j = nlohmann::json::parse(contents, nullptr, false);
+		s64 savedAt = j.is_discarded() ? 0 : j.value("savedAt", static_cast<s64>(0));
+		if (std::time(nullptr) - savedAt < 60 * 60)
+		{
+			std::string code = j.value("code", "");
+			std::string password = j.value("password", "");
+			strncpy(resp.rejoin_code, code.c_str(), sizeof(resp.rejoin_code) - 1);
+			strncpy(resp.rejoin_password, password.c_str(), sizeof(resp.rejoin_password) - 1);
+		}
 	}
 
 	u8 *data = reinterpret_cast<u8 *>(&resp);

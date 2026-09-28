@@ -116,7 +116,7 @@ struct CreateRoomQuery
 	u8 command;
 	u8 visibility;
 	u8 mode;
-	u8 capacity; // 0 is no limit
+	u8 capacity;
 	u8 stage_mode;
 	u8 last_char;
 	u8 last_color;
@@ -164,6 +164,7 @@ struct GetRoomStateResponse
 	u8 play_char[2];
 	u8 play_color[2];
 	u8 turn_seconds; // 0xFF when it's nobody's turn
+	u8 host_member;  // 0xFF while nobody is hosting
 };
 
 struct JoinRoomQuery
@@ -190,6 +191,8 @@ struct GetRoomListResponse
 	u8 status;
 	u8 count;
 	RoomListing rooms[ROOM_LIST_MAX];
+	char rejoin_code[5]; // The last room, after a crash. Empty when there's nothing to rejoin
+	char rejoin_password[5];
 };
 
 // Not sure if resetting is strictly needed, might be contained to the file

@@ -2,11 +2,10 @@
 
 #include <atomic>
 #include <deque>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
+#include <vector>
 
 #include <enet/enet.h>
 #include <json.hpp>
@@ -18,7 +17,13 @@
 
 // Being in a room, either as the host running it or as a member who joined it. Members connect
 // straight to the host, which sends everyone the room whenever it changes and applies what each
-// member does. Matches and spectating connect separately
+// member does. When the host leaves or is lost, the member who has been in the room longest takes
+// over and the others reconnect to them through the room's code. Matches and spectating connect
+// separately.
+//
+// All networking runs on threads the game never waits for, so leaving a room or changing hosts
+// never stalls emulation. Each session shares its state with its threads, which clean up on their
+// own once the session is gone
 class SlippiRoomSession
 {
   public:
@@ -28,6 +33,7 @@ class SlippiRoomSession
 		STATUS_JOINING = 1,
 		STATUS_JOINED = 2,
 		STATUS_FAILED = 3,
+		STATUS_RECONNECTING = 4, // The host changed and the room is being rejoined
 	};
 
 	enum ConnectionError : u8
@@ -41,9 +47,16 @@ class SlippiRoomSession
 		CONNECT_UNREACHABLE = 6,
 		CONNECT_DISCONNECTED = 7,
 		CONNECT_REJECTED = 8,
+		CONNECT_IDLE = 9, // The room closed after an hour without activity
 	};
 
-	static const int PROTOCOL_VERSION = 1;
+	static const int PROTOCOL_VERSION = 2;
+
+	struct Identity
+	{
+		std::string name;
+		std::string connectCode;
+	};
 
 	virtual ~SlippiRoomSession() = default;
 
@@ -52,81 +65,122 @@ class SlippiRoomSession
 	virtual SlippiExiTypes::GetRoomStateResponse GetState() = 0;
 	virtual void AddTestPlayer() {}
 
+	// Leaving on purpose. The session can be destroyed right after
+	virtual void Leave() = 0;
+
+	// Once this session has changed role, such as a member taking over as host, returns the session
+	// that replaces it
+	virtual std::unique_ptr<SlippiRoomSession> TakeNext() = 0;
+
   protected:
+	// How a member finds the room again after its host changed. The first candidate takes over, and
+	// the others wait their turn in order in case the ones before them are gone too
+	struct Reconnect
+	{
+		SlippiRoom room; // The last copy, shown while reconnecting
+		std::vector<std::string> candidates;
+		SlippiRoom::HostChange change = SlippiRoom::HOST_LOST;
+		int knownGeneration = 0;
+	};
+
 	static void sendMessage(ENetPeer *peer, const nlohmann::json &msg);
 };
 
 class SlippiRoomHost : public SlippiRoomSession
 {
   public:
-	SlippiRoomHost(const SlippiExiTypes::CreateRoomQuery &query, const std::string &localName,
-	               const std::string &localConnectCode);
+	// Creates a new room
+	SlippiRoomHost(const Identity &identity, const SlippiExiTypes::CreateRoomQuery &query);
+
+	// Takes a room over, starting from this member's copy of it
+	SlippiRoomHost(const Identity &identity, const SlippiRoom &copy, SlippiRoom::HostChange change);
+
 	~SlippiRoomHost();
 
 	void HandleLocalAction(u8 action, u8 value0, u8 value1) override;
 	void ReportMatchResult(SlippiRoom::MatchResult result) override;
 	SlippiExiTypes::GetRoomStateResponse GetState() override;
 	void AddTestPlayer() override;
+	void Leave() override;
+	std::unique_ptr<SlippiRoomSession> TakeNext() override;
 
   private:
-	// Registering with the directory and keeping the room registered is shared with a thread that
-	// can outlive the host, so leaving a room never waits on the network
-	struct Registration
+	struct Shared
 	{
 		std::mutex lock;
 		std::atomic<bool> running{true};
+		std::atomic<bool> leaving{false};
+		SlippiRoom room;
+		ConnectionStatus status = STATUS_HOSTING;
+		ConnectionError error = CONNECT_OK;
+
+		// Set when this host steps down to a member, such as when handing the room back
+		std::unique_ptr<Reconnect> next;
+
+		// Directory
 		SlippiRoomDirectory::Registration reg;
-		bool failed = false;
+		bool registered = false;
+		bool unavailable = false;
+		bool activityWanted = false;
 		u8 memberCount = 1;
+		bool closeRoom = false;
+		bool replaced = false; // Another member took the room over
+		bool gone = false;     // The directory no longer has the room
+		std::atomic<bool> netDone{false};
 	};
 
-	void netThread();
-	static void directoryThread(std::shared_ptr<Registration> registration, SlippiRoomDirectory::RoomInfo info,
-	                            u16 port);
-	void onReceive(ENetPeer *peer, const nlohmann::json &msg);
-	void reject(ENetPeer *peer, const std::string &reason);
-	void broadcastIfChanged();
+	class NetThread;
 
-	std::mutex m_lock;
-	SlippiRoom m_room;
-	std::string m_localConnectCode;
+	void start(SlippiRoomDirectory::RoomInfo info, bool isTakeOver);
+	static void runNetThread(std::shared_ptr<Shared> shared, Identity identity, ENetHost *host, bool tookOver);
+	static void directoryThread(std::shared_ptr<Shared> shared, SlippiRoomDirectory::RoomInfo info,
+	                            std::string takeOverCode, int takeOverGeneration);
 
-	ENetHost *m_host = nullptr;
-	u16 m_port = 0;
-	std::map<ENetPeer *, std::string> m_peerCodes; // Members are found by connect code
-	std::string m_lastBroadcast;
-
-	std::atomic<bool> m_running{true};
-	std::thread m_netThread;
-	std::shared_ptr<Registration> m_registration;
+	Identity m_identity;
+	std::shared_ptr<Shared> m_shared;
 };
 
 class SlippiRoomMember : public SlippiRoomSession
 {
   public:
-	SlippiRoomMember(const SlippiExiTypes::JoinRoomQuery &query, const std::string &localName,
-	                 const std::string &localConnectCode);
+	// Joins a room by its code
+	SlippiRoomMember(const Identity &identity, const SlippiExiTypes::JoinRoomQuery &query);
+
+	// Finds a room again after its host changed
+	SlippiRoomMember(const Identity &identity, const Reconnect &reconnect);
+
 	~SlippiRoomMember();
 
 	void HandleLocalAction(u8 action, u8 value0, u8 value1) override;
 	void ReportMatchResult(SlippiRoom::MatchResult result) override;
 	SlippiExiTypes::GetRoomStateResponse GetState() override;
+	void Leave() override;
+	std::unique_ptr<SlippiRoomSession> TakeNext() override;
 
   private:
-	void netThread();
-	void fail(ConnectionError error);
+	struct Shared
+	{
+		std::mutex lock;
+		std::atomic<bool> running{true};
+		std::atomic<bool> leaving{false};
+		std::string code;
+		std::string password;
+		SlippiRoom room;
+		int localMember = 0;
+		ConnectionStatus status = STATUS_JOINING;
+		ConnectionError error = CONNECT_OK;
+		std::deque<nlohmann::json> outgoing;
 
-	std::string m_code;
-	std::string m_password;
-	nlohmann::json m_hello;
+		// Set when this member takes over as host
+		bool promote = false;
+		SlippiRoom::HostChange promoteChange = SlippiRoom::HOST_LOST;
+	};
 
-	std::mutex m_lock;
-	SlippiRoom m_room;
-	int m_localMember = 0;
-	ConnectionStatus m_status = STATUS_JOINING;
-	ConnectionError m_error = CONNECT_OK;
-	std::deque<nlohmann::json> m_outgoing;
+	class NetThread;
 
-	std::atomic<bool> m_running{true};
-	std::thread m_netThread;
+	static void runNetThread(std::shared_ptr<Shared> shared, Identity identity, u8 lastChar, u8 lastColor,
+	                         std::shared_ptr<Reconnect> reconnect);
+
+	Identity m_identity;
+	std::shared_ptr<Shared> m_shared;
 };

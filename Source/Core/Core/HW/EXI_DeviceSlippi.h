@@ -287,6 +287,7 @@ class CEXISlippi : public IEXIDevice
 	void handleJoinRoom(const SlippiExiTypes::JoinRoomQuery &query);
 	void handleFetchRoomList();
 	void prepareRoomList();
+	void saveLastRoom(const SlippiExiTypes::GetRoomStateResponse &state);
 	void initEnet();
 
 	// replay playback stuff
@@ -378,6 +379,7 @@ class CEXISlippi : public IEXIDevice
 	std::unique_ptr<SlippiDirectCodes> directCodes;
 	std::unique_ptr<SlippiDirectCodes> teamsCodes;
 	std::unique_ptr<SlippiRoomSession> room;
+	std::string lastRoomCode; // The room saved for rejoining after a crash
 
 	// The public room list, fetched off the CPU thread
 	enum
