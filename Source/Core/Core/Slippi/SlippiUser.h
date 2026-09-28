@@ -43,6 +43,11 @@ class SlippiUser
 	SlippiUser(uintptr_t rs_exi_device_ptr);
 	~SlippiUser();
 
+	// Copies the Slippi Launcher's account into this build's folder when it has none of its own, so
+	// a separate build is logged in like the launcher is. Must run before the Rust device is created,
+	// since that's when the account is read
+	static void AdoptLauncherAccount();
+
 	bool AttemptLogin();
 	void OpenLogInPage();
 	bool UpdateApp();
