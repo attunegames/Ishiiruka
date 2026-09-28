@@ -1,0 +1,184 @@
+#include "SlippiRoomDirectory.h"
+
+#include <curl/curl.h>
+#include <json.hpp>
+
+#include "Common/Logging/Log.h"
+#include "Core/ConfigManager.h"
+
+using json = nlohmann::json;
+
+namespace
+{
+size_t receive(char *ptr, size_t size, size_t nmemb, void *userdata)
+{
+	static_cast<std::string *>(userdata)->append(ptr, size * nmemb);
+	return size * nmemb;
+}
+
+// Rooms directory backed by Supabase. Each operation is a Postgres function called through
+// Supabase's REST API with a publishable key, so the key only allows calling those functions
+class SupabaseRoomDirectory : public SlippiRoomDirectory
+{
+  public:
+	SupabaseRoomDirectory(std::string url, std::string key)
+	    : m_url(std::move(url))
+	    , m_key(std::move(key))
+	{
+	}
+
+	Registration Register(const RoomInfo &info) override
+	{
+		json args = {
+		    {"p_port", info.port},
+		    {"p_listed", info.listed},
+		    {"p_password", info.password.empty() ? json(nullptr) : json(info.password)},
+		    {"p_host_name", info.hostName},
+		    {"p_mode", info.mode},
+		    {"p_stage_mode", info.stageMode},
+		    {"p_capacity", info.capacity},
+		};
+
+		Registration reg;
+		json resp;
+		if (!call("room_create", args, resp) || !resp.is_array() || resp.empty())
+			return reg;
+
+		reg.code = resp[0].value("code", "");
+		reg.hostToken = resp[0].value("host_token", "");
+		return reg;
+	}
+
+	bool Heartbeat(const Registration &reg, u8 memberCount) override
+	{
+		json args = {{"p_code", reg.code}, {"p_host_token", reg.hostToken}, {"p_member_count", memberCount}};
+		json resp;
+		return call("room_heartbeat", args, resp) && resp.is_boolean() && resp.get<bool>();
+	}
+
+	void Unregister(const Registration &reg) override
+	{
+		json args = {{"p_code", reg.code}, {"p_host_token", reg.hostToken}};
+		json resp;
+		call("room_close", args, resp);
+	}
+
+	JoinResult Join(const std::string &code, const std::string &password) override
+	{
+		json args = {{"p_code", code}, {"p_password", password.empty() ? json(nullptr) : json(password)}};
+
+		JoinResult result;
+		json resp;
+		if (!call("room_join", args, resp) || !resp.is_array() || resp.empty())
+			return result;
+
+		std::string status = resp[0].value("status", "");
+		if (status == "ok")
+		{
+			result.status = JoinStatus::OK;
+			result.address = resp[0].value("address", "");
+			result.hostName = resp[0].value("host_name", "");
+		}
+		else if (status == "not_found")
+			result.status = JoinStatus::NOT_FOUND;
+		else if (status == "wrong_password")
+			result.status = JoinStatus::WRONG_PASSWORD;
+		else if (status == "full")
+			result.status = JoinStatus::FULL;
+		else if (status == "locked")
+			result.status = JoinStatus::LOCKED;
+
+		return result;
+	}
+
+	bool List(std::vector<Listing> &out) override
+	{
+		json resp;
+		if (!call("room_list", json::object(), resp) || !resp.is_array())
+			return false;
+
+		out.clear();
+		for (const json &el : resp)
+		{
+			Listing l;
+			l.code = el.value("code", "");
+			l.hostName = el.value("host_name", "");
+			l.mode = el.value("mode", 0);
+			l.stageMode = el.value("stage_mode", 0);
+			l.capacity = el.value("capacity", 0);
+			l.memberCount = el.value("member_count", 0);
+			out.push_back(l);
+		}
+		return true;
+	}
+
+  private:
+	bool call(const std::string &fn, const json &args, json &resp)
+	{
+		CURL *curl = curl_easy_init();
+		if (!curl)
+			return false;
+
+		std::string endpoint = m_url + "/rest/v1/rpc/" + fn;
+		std::string body = args.dump();
+		std::string received;
+
+		struct curl_slist *headers = nullptr;
+		headers = curl_slist_append(headers, "Content-Type: application/json");
+		headers = curl_slist_append(headers, ("apikey: " + m_key).c_str());
+
+		curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &receive);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &received);
+		curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000);
+
+		// The host's address is taken from this connection, and rooms connect over IPv4
+		curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+
+		CURLcode res = curl_easy_perform(curl);
+		long status = 0;
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+
+		curl_slist_free_all(headers);
+		curl_easy_cleanup(curl);
+
+		if (res != CURLE_OK || status < 200 || status >= 300)
+		{
+			ERROR_LOG(SLIPPI_ONLINE, "[Rooms] Directory call %s failed, curl: %d, status: %ld", fn.c_str(), res,
+			          status);
+			return false;
+		}
+
+		resp = json::parse(received, nullptr, false);
+		return !resp.is_discarded();
+	}
+
+	std::string m_url;
+	std::string m_key;
+};
+
+// Used when no directory is configured. Rooms still work locally, they just can't be joined
+class NoRoomDirectory : public SlippiRoomDirectory
+{
+  public:
+	Registration Register(const RoomInfo &info) override { return {}; }
+	bool Heartbeat(const Registration &reg, u8 memberCount) override { return false; }
+	void Unregister(const Registration &reg) override {}
+	JoinResult Join(const std::string &code, const std::string &password) override { return {}; }
+	bool List(std::vector<Listing> &out) override { return false; }
+};
+} // namespace
+
+std::unique_ptr<SlippiRoomDirectory> SlippiRoomDirectory::Create()
+{
+	const SConfig &config = SConfig::GetInstance();
+	if (config.m_slippiRoomsDirectoryUrl.empty() || config.m_slippiRoomsDirectoryKey.empty())
+	{
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] No rooms directory is configured");
+		return std::make_unique<NoRoomDirectory>();
+	}
+
+	return std::make_unique<SupabaseRoomDirectory>(config.m_slippiRoomsDirectoryUrl, config.m_slippiRoomsDirectoryKey);
+}

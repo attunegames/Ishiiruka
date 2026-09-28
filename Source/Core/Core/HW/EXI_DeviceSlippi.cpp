@@ -3172,6 +3172,19 @@ void CEXISlippi::handleReportGame(const SlippiExiTypes::ReportGameQuery &query)
 #ifndef LOCAL_TESTING
 	slprs_exi_device_log_game_report(slprs_exi_device_ptr, gameReport);
 #endif
+
+	// A room match moves the room's queue with its result. Quitting out counts as a loss for
+	// whoever quit
+	if (room)
+	{
+		SlippiRoom::MatchResult result = SlippiRoom::RESULT_DRAW;
+		if (gameEndMethod == 7 && lrasInitiator >= 0)
+			result = lrasInitiator == localPlayerIndex ? SlippiRoom::RESULT_LOST : SlippiRoom::RESULT_WON;
+		else if (winnerIdx >= 0)
+			result = winnerIdx == localPlayerIndex ? SlippiRoom::RESULT_WON : SlippiRoom::RESULT_LOST;
+
+		room->ReportMatchResult(result);
+	}
 }
 
 void CEXISlippi::prepareDelayResponse()
@@ -3367,6 +3380,111 @@ void CEXISlippi::handleGetRank()
 	m_read_queue.push_back(static_cast<u8>(rank_info.rank_change));
 }
 
+void CEXISlippi::handleCreateRoom(const SlippiExiTypes::CreateRoomQuery &query)
+{
+	initEnet();
+	auto userInfo = user->GetUserInfo();
+	room = std::make_unique<SlippiRoomHost>(query, userInfo.displayName, userInfo.connectCode);
+}
+
+void CEXISlippi::handleJoinRoom(const SlippiExiTypes::JoinRoomQuery &query)
+{
+	initEnet();
+	auto userInfo = user->GetUserInfo();
+	room = std::make_unique<SlippiRoomMember>(query, userInfo.displayName, userInfo.connectCode);
+}
+
+void CEXISlippi::initEnet()
+{
+	if (isEnetInitialized)
+		return;
+
+	auto res = enet_initialize();
+	if (res < 0)
+		ERROR_LOG(SLIPPI_ONLINE, "Failed to initialize enet res: %d", res);
+
+	isEnetInitialized = true;
+}
+
+void CEXISlippi::handleRoomAction(const SlippiExiTypes::RoomActionQuery &query)
+{
+	if (!room)
+		return;
+
+	if (query.action == SlippiRoom::ACTION_LEAVE_ROOM)
+	{
+		room = nullptr;
+		return;
+	}
+
+	if (query.action == SlippiRoom::ACTION_ADD_TEST_PLAYER)
+	{
+		room->AddTestPlayer();
+		return;
+	}
+
+	room->HandleLocalAction(query.action, query.value[0], query.value[1]);
+}
+
+void CEXISlippi::prepareRoomState()
+{
+	m_read_queue.clear();
+
+	SlippiExiTypes::GetRoomStateResponse resp = {};
+	if (room)
+		resp = room->GetState();
+
+	u8 *data = reinterpret_cast<u8 *>(&resp);
+	m_read_queue.insert(m_read_queue.end(), data, data + sizeof(resp));
+}
+
+static std::pair<bool, std::vector<SlippiRoomDirectory::Listing>> fetchRoomList()
+{
+	std::vector<SlippiRoomDirectory::Listing> listings;
+	bool ok = SlippiRoomDirectory::Create()->List(listings);
+	return std::make_pair(ok, listings);
+}
+
+void CEXISlippi::handleFetchRoomList()
+{
+	// Only one fetch at a time
+	if (roomListFuture.valid() && roomListFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+		return;
+
+	roomListStatus = ROOM_LIST_FETCHING;
+	roomListFuture = std::async(std::launch::async, fetchRoomList);
+}
+
+void CEXISlippi::prepareRoomList()
+{
+	m_read_queue.clear();
+
+	if (roomListFuture.valid() && roomListFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+	{
+		auto result = roomListFuture.get();
+		roomListStatus = result.first ? ROOM_LIST_FETCHED : ROOM_LIST_FAILED;
+		roomList = result.second;
+	}
+
+	SlippiExiTypes::GetRoomListResponse resp = {};
+	resp.status = roomListStatus;
+	resp.count = static_cast<u8>(std::min<size_t>(roomList.size(), ROOM_LIST_MAX));
+	for (int i = 0; i < resp.count; i++)
+	{
+		SlippiExiTypes::RoomListing &rl = resp.rooms[i];
+		std::string hostName = ConvertStringForGame(roomList[i].hostName, MAX_NAME_LENGTH);
+		strncpy(rl.code, roomList[i].code.c_str(), sizeof(rl.code) - 1);
+		memcpy(rl.host_name, hostName.c_str(), std::min(hostName.size(), sizeof(rl.host_name) - 1));
+		rl.mode = roomList[i].mode;
+		rl.stage_mode = roomList[i].stageMode;
+		rl.capacity = roomList[i].capacity;
+		rl.member_count = roomList[i].memberCount;
+	}
+
+	u8 *data = reinterpret_cast<u8 *>(&resp);
+	m_read_queue.insert(m_read_queue.end(), data, data + sizeof(resp));
+}
+
 void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 {
 	u8 *memPtr = Memory::GetPointer(_uAddr);
@@ -3543,6 +3661,24 @@ void CEXISlippi::DMAWrite(u32 _uAddr, u32 _uSize)
 			break;
 		case CMD_GET_PLAYER_SETTINGS:
 			handleGetPlayerSettings();
+			break;
+		case CMD_CREATE_ROOM:
+			handleCreateRoom(SlippiExiTypes::Convert<SlippiExiTypes::CreateRoomQuery>(&memPtr[bufLoc]));
+			break;
+		case CMD_ROOM_ACTION:
+			handleRoomAction(SlippiExiTypes::Convert<SlippiExiTypes::RoomActionQuery>(&memPtr[bufLoc]));
+			break;
+		case CMD_GET_ROOM_STATE:
+			prepareRoomState();
+			break;
+		case CMD_JOIN_ROOM:
+			handleJoinRoom(SlippiExiTypes::Convert<SlippiExiTypes::JoinRoomQuery>(&memPtr[bufLoc]));
+			break;
+		case CMD_FETCH_ROOM_LIST:
+			handleFetchRoomList();
+			break;
+		case CMD_GET_ROOM_LIST:
+			prepareRoomList();
 			break;
 		case CMD_PLAY_MUSIC:
 		{

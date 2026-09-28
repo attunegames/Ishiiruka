@@ -6,6 +6,8 @@
 
 #include <SlippiLib/SlippiGame.h>
 
+#include <future>
+
 #include "Common/CommonTypes.h"
 #include "Common/FileUtil.h"
 #include "Core/HW/EXI_Device.h"
@@ -15,6 +17,7 @@
 #include "Core/Slippi/SlippiMatchmaking.h"
 #include "Core/Slippi/SlippiNetplay.h"
 #include "Core/Slippi/SlippiReplayComm.h"
+#include "Core/Slippi/SlippiRoomSession.h"
 #include "Core/Slippi/SlippiSavestate.h"
 #include "Core/Slippi/SlippiSpectate.h"
 #include "Core/Slippi/SlippiUser.h"
@@ -92,6 +95,12 @@ class CEXISlippi : public IEXIDevice
 		CMD_REPORT_SET_COMPLETE = 0xC2,
 		CMD_GET_PLAYER_SETTINGS = 0xC3,
 		CMD_REPORT_MATCH_STATUS_UPDATE = 0xC4,
+		CMD_CREATE_ROOM = 0xC5,
+		CMD_ROOM_ACTION = 0xC6,
+		CMD_GET_ROOM_STATE = 0xC7,
+		CMD_JOIN_ROOM = 0xC8,
+		CMD_FETCH_ROOM_LIST = 0xC9,
+		CMD_GET_ROOM_LIST = 0xCA,
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -180,6 +189,12 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_REPORT_SET_COMPLETE, static_cast<u32>(sizeof(SlippiExiTypes::ReportSetCompletionQuery) - 1)},
 	    {CMD_GET_PLAYER_SETTINGS, 0},
 	    {CMD_REPORT_MATCH_STATUS_UPDATE, static_cast<u32>(sizeof(SlippiExiTypes::ReportMatchStatusUpdateQuery) - 1)},
+	    {CMD_CREATE_ROOM, static_cast<u32>(sizeof(SlippiExiTypes::CreateRoomQuery) - 1)},
+	    {CMD_ROOM_ACTION, static_cast<u32>(sizeof(SlippiExiTypes::RoomActionQuery) - 1)},
+	    {CMD_GET_ROOM_STATE, 0},
+	    {CMD_JOIN_ROOM, static_cast<u32>(sizeof(SlippiExiTypes::JoinRoomQuery) - 1)},
+	    {CMD_FETCH_ROOM_LIST, 0},
+	    {CMD_GET_ROOM_LIST, 0},
 
 	    // Misc
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
@@ -266,6 +281,13 @@ class CEXISlippi : public IEXIDevice
 	void handleMatchStatusUpdate(const SlippiExiTypes::ReportMatchStatusUpdateQuery &query);
 	void handleGetPlayerSettings();
 	void handleGetRank();
+	void handleCreateRoom(const SlippiExiTypes::CreateRoomQuery &query);
+	void handleRoomAction(const SlippiExiTypes::RoomActionQuery &query);
+	void prepareRoomState();
+	void handleJoinRoom(const SlippiExiTypes::JoinRoomQuery &query);
+	void handleFetchRoomList();
+	void prepareRoomList();
+	void initEnet();
 
 	// replay playback stuff
 	void prepareGameInfo(u8 *payload);
@@ -355,6 +377,18 @@ class CEXISlippi : public IEXIDevice
 	std::unique_ptr<SlippiMatchmaking> matchmaking;
 	std::unique_ptr<SlippiDirectCodes> directCodes;
 	std::unique_ptr<SlippiDirectCodes> teamsCodes;
+	std::unique_ptr<SlippiRoomSession> room;
+
+	// The public room list, fetched off the CPU thread
+	enum
+	{
+		ROOM_LIST_FETCHING = 0,
+		ROOM_LIST_FETCHED = 1,
+		ROOM_LIST_FAILED = 2,
+	};
+	std::future<std::pair<bool, std::vector<SlippiRoomDirectory::Listing>>> roomListFuture;
+	std::vector<SlippiRoomDirectory::Listing> roomList;
+	u8 roomListStatus = ROOM_LIST_FETCHING;
 
 	std::map<s32, std::unique_ptr<SlippiSavestate>> activeSavestates;
 	std::deque<std::unique_ptr<SlippiSavestate>> availableSavestates;

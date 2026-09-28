@@ -763,6 +763,15 @@
     <ClCompile Include="Slippi\SlippiPad.cpp">
       <Filter>Slippi</Filter>
     </ClCompile>
+    <ClCompile Include="Slippi\SlippiRoom.cpp">
+      <Filter>Slippi</Filter>
+    </ClCompile>
+    <ClCompile Include="Slippi\SlippiRoomDirectory.cpp">
+      <Filter>Slippi</Filter>
+    </ClCompile>
+    <ClCompile Include="Slippi\SlippiRoomSession.cpp">
+      <Filter>Slippi</Filter>
+    </ClCompile>
     <ClCompile Include="Slippi\SlippiSavestate.cpp">
       <Filter>Slippi</Filter>
     </ClCompile>
@@ -1332,6 +1341,15 @@
       <Filter>Slippi</Filter>
     </ClInclude>
     <ClInclude Include="Slippi\SlippiPad.h">
+      <Filter>Slippi</Filter>
+    </ClInclude>
+    <ClInclude Include="Slippi\SlippiRoom.h">
+      <Filter>Slippi</Filter>
+    </ClInclude>
+    <ClInclude Include="Slippi\SlippiRoomDirectory.h">
+      <Filter>Slippi</Filter>
+    </ClInclude>
+    <ClInclude Include="Slippi\SlippiRoomSession.h">
       <Filter>Slippi</Filter>
     </ClInclude>
     <ClInclude Include="Slippi\SlippiSavestate.h">
