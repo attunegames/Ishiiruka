@@ -27,6 +27,7 @@
 #include "Common/CPUDetect.h"
 #include "Common/CommonPaths.h"
 #include "Common/CommonTypes.h"
+#include "Common/FileSearch.h"
 #include "Common/FileUtil.h"
 #include "Common/IniFile.h"
 #include "Common/Logging/LogManager.h"
@@ -39,6 +40,8 @@
 #include "Core/Host.h"
 #include "Core/Movie.h"
 #include "Core/Slippi/SlippiSpectate.h"
+#include "DiscIO/Volume.h"
+#include "DiscIO/VolumeCreator.h"
 
 #include "Core/GeckoCode.h"
 #include "Core/GeckoCodeConfig.h"
@@ -416,6 +419,19 @@ void DolphinApp::MacOpenFile(const wxString &fileName)
 }
 #endif
 
+// A Melee 1.02 disc in the same folder as Dolphin, found by its game ID and revision rather than its
+// file name. Empty when there's none
+static std::string FindMeleeNextToExe()
+{
+	for (const std::string &path : DoFileSearch({".iso", ".gcm", ".ciso", ".gcz"}, {File::GetExeDirectory()}))
+	{
+		std::unique_ptr<DiscIO::IVolume> volume = DiscIO::CreateVolumeFromFilename(path);
+		if (volume && volume->GetGameID() == "GALE01" && volume->GetRevision() == 2)
+			return path;
+	}
+	return "";
+}
+
 void DolphinApp::AfterInit()
 {
 	// always raise the frame so that it is in the foreground on launch
@@ -498,6 +514,17 @@ void DolphinApp::AfterInit()
 		if (main_frame->g_pCodeWindow->AutomaticStart())
 		{
 			main_frame->BootGame("");
+		}
+	}
+	// Opened with no game, such as by double-clicking it: a Melee disc next to Dolphin starts, the way
+	// the Slippi Launcher starts it
+	else if (!m_batch_mode)
+	{
+		std::string melee = FindMeleeNextToExe();
+		if (!melee.empty())
+		{
+			main_frame->BootGame(melee);
+			main_frame->RaiseRenderWindow();
 		}
 	}
 }
