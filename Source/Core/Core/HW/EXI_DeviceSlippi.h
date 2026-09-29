@@ -430,9 +430,23 @@ class CEXISlippi : public IEXIDevice
 		ROOM_LIST_FETCHED = 1,
 		ROOM_LIST_FAILED = 2,
 	};
-	std::future<std::pair<bool, std::vector<SlippiRoomDirectory::Listing>>> roomListFuture;
+	struct RoomListFetch
+	{
+		bool ok = false;
+		std::vector<SlippiRoomDirectory::Listing> listings;
+
+		// The room left by a crash, and whether it's still up to rejoin
+		std::string rejoinCode;
+		std::string rejoinPassword;
+		bool isRejoinChecked = false;
+		bool isRejoinUp = false;
+	};
+	static RoomListFetch fetchRoomList(std::string rejoinCode, std::string rejoinPassword);
+	std::future<RoomListFetch> roomListFuture;
 	std::vector<SlippiRoomDirectory::Listing> roomList;
 	u8 roomListStatus = ROOM_LIST_FETCHING;
+	std::string rejoinCode; // Empty unless the last room can be rejoined
+	std::string rejoinPassword;
 
 	std::map<s32, std::unique_ptr<SlippiSavestate>> activeSavestates;
 	std::deque<std::unique_ptr<SlippiSavestate>> availableSavestates;

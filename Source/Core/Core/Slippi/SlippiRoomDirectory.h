@@ -126,6 +126,10 @@ class SlippiRoomDirectory
 	virtual JoinResult Join(const std::string &code, const std::string &password, u16 port) = 0;
 	virtual bool List(std::vector<Listing> &out) = 0;
 
+	// Whether a room with this code is up, public or private. Returns false when the directory can't be
+	// reached
+	virtual bool Exists(const std::string &code, bool &exists) = 0;
+
 	// Returns the directory rooms are configured to use
 	static std::unique_ptr<SlippiRoomDirectory> Create();
 };

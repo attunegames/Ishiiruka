@@ -161,6 +161,16 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		return result;
 	}
 
+	bool Exists(const std::string &code, bool &exists) override
+	{
+		json resp;
+		if (!call("room_exists", {{"p_code", code}}, resp) || !resp.is_boolean())
+			return false;
+
+		exists = resp.get<bool>();
+		return true;
+	}
+
 	bool List(std::vector<Listing> &out) override
 	{
 		json resp;
@@ -251,6 +261,7 @@ class NoRoomDirectory : public SlippiRoomDirectory
 	void Unregister(const Registration &reg) override {}
 	JoinResult Join(const std::string &code, const std::string &password, u16 port) override { return {}; }
 	bool List(std::vector<Listing> &out) override { return false; }
+	bool Exists(const std::string &code, bool &exists) override { return false; }
 };
 } // namespace
 

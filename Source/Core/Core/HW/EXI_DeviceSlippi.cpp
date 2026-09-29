@@ -3755,7 +3755,9 @@ void CEXISlippi::prepareRoomState()
 }
 
 // Asked every frame while a player practices in a room, and by the practice scenes on their way out.
-// Practice ends once the room calls them up for a set, or when there's no room to go back to
+// Practice ends once the room calls them up for a set, meaning they're on a side and have someone to
+// play, or when there's no room to go back to. A winner nobody has challenged practices until someone
+// does
 void CEXISlippi::preparePracticeOver()
 {
 	m_read_queue.clear();
@@ -3768,17 +3770,41 @@ void CEXISlippi::preparePracticeOver()
 			room = std::move(next);
 
 		SlippiExiTypes::GetRoomStateResponse state = room->GetState();
-		bool isOnSide = state.sides[0] == state.local_member || state.sides[1] == state.local_member;
-		isOver = isOnSide || state.connection_status == SlippiRoomSession::STATUS_FAILED;
+		int side = state.sides[0] == state.local_member ? 0 : state.sides[1] == state.local_member ? 1 : -1;
+		bool isCalledUp = side >= 0 && state.sides[1 - side] >= 0;
+		isOver = isCalledUp || state.connection_status == SlippiRoomSession::STATUS_FAILED;
 	}
 	m_read_queue.push_back(isOver);
 }
 
-static std::pair<bool, std::vector<SlippiRoomDirectory::Listing>> fetchRoomList()
+// The last room, when it was left by a crash rather than on purpose. Rooms with no activity for an
+// hour are gone anyway
+static bool readLastRoom(std::string &code, std::string &password)
 {
-	std::vector<SlippiRoomDirectory::Listing> listings;
-	bool ok = SlippiRoomDirectory::Create()->List(listings);
-	return std::make_pair(ok, listings);
+	std::string contents;
+	if (!File::ReadFileToString(lastRoomPath(), contents))
+		return false;
+
+	nlohmann::json j = nlohmann::json::parse(contents, nullptr, false);
+	if (j.is_discarded() || std::time(nullptr) - j.value("savedAt", static_cast<s64>(0)) >= 60 * 60)
+		return false;
+
+	code = j.value("code", "");
+	password = j.value("password", "");
+	return !code.empty();
+}
+
+CEXISlippi::RoomListFetch CEXISlippi::fetchRoomList(std::string rejoinCode, std::string rejoinPassword)
+{
+	RoomListFetch fetch;
+	auto directory = SlippiRoomDirectory::Create();
+	fetch.ok = directory->List(fetch.listings);
+
+	fetch.rejoinCode = rejoinCode;
+	fetch.rejoinPassword = rejoinPassword;
+	if (!rejoinCode.empty())
+		fetch.isRejoinChecked = directory->Exists(rejoinCode, fetch.isRejoinUp);
+	return fetch;
 }
 
 void CEXISlippi::handleFetchRoomList()
@@ -3787,8 +3813,12 @@ void CEXISlippi::handleFetchRoomList()
 	if (roomListFuture.valid() && roomListFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
 		return;
 
+	std::string code, password;
+	if (room || !readLastRoom(code, password))
+		code.clear();
+
 	roomListStatus = ROOM_LIST_FETCHING;
-	roomListFuture = std::async(std::launch::async, fetchRoomList);
+	roomListFuture = std::async(std::launch::async, fetchRoomList, code, password);
 }
 
 void CEXISlippi::prepareRoomList()
@@ -3797,9 +3827,25 @@ void CEXISlippi::prepareRoomList()
 
 	if (roomListFuture.valid() && roomListFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
 	{
-		auto result = roomListFuture.get();
-		roomListStatus = result.first ? ROOM_LIST_FETCHED : ROOM_LIST_FAILED;
-		roomList = result.second;
+		RoomListFetch fetch = roomListFuture.get();
+		roomListStatus = fetch.ok ? ROOM_LIST_FETCHED : ROOM_LIST_FAILED;
+		roomList = fetch.listings;
+
+		// Rejoin is only offered for a room that's still up. One that's gone is forgotten, unless a
+		// newer room was saved since the fetch started
+		rejoinCode.clear();
+		rejoinPassword.clear();
+		if (fetch.isRejoinChecked && fetch.isRejoinUp)
+		{
+			rejoinCode = fetch.rejoinCode;
+			rejoinPassword = fetch.rejoinPassword;
+		}
+		else if (fetch.isRejoinChecked)
+		{
+			std::string code, password;
+			if (readLastRoom(code, password) && code == fetch.rejoinCode)
+				File::Delete(lastRoomPath());
+		}
 	}
 
 	SlippiExiTypes::GetRoomListResponse resp = {};
@@ -3818,20 +3864,10 @@ void CEXISlippi::prepareRoomList()
 		rl.region = roomList[i].region;
 	}
 
-	// Offer the last room when it was left by a crash rather than on purpose. Rooms with no activity
-	// for an hour are gone anyway
-	std::string contents;
-	if (!room && File::ReadFileToString(lastRoomPath(), contents))
+	if (!room && !rejoinCode.empty())
 	{
-		nlohmann::json j = nlohmann::json::parse(contents, nullptr, false);
-		s64 savedAt = j.is_discarded() ? 0 : j.value("savedAt", static_cast<s64>(0));
-		if (std::time(nullptr) - savedAt < 60 * 60)
-		{
-			std::string code = j.value("code", "");
-			std::string password = j.value("password", "");
-			strncpy(resp.rejoin_code, code.c_str(), sizeof(resp.rejoin_code) - 1);
-			strncpy(resp.rejoin_password, password.c_str(), sizeof(resp.rejoin_password) - 1);
-		}
+		strncpy(resp.rejoin_code, rejoinCode.c_str(), sizeof(resp.rejoin_code) - 1);
+		strncpy(resp.rejoin_password, rejoinPassword.c_str(), sizeof(resp.rejoin_password) - 1);
 	}
 
 	u8 *data = reinterpret_cast<u8 *>(&resp);
