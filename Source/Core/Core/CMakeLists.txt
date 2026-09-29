@@ -201,8 +201,10 @@ set(SRCS	ActionReplay.cpp
 			Slippi/SlippiRoomSession.cpp
 			Slippi/SlippiSavestate.cpp
 			Slippi/SlippiSpectate.cpp
+			Slippi/SlippiStun.cpp
 			Slippi/SlippiTimer.cpp
 			Slippi/SlippiUser.cpp
+			Slippi/SlippiWatch.cpp
 			Slippi/SlippiDirectCodes.cpp
 			)
 

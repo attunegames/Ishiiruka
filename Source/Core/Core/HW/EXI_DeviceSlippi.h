@@ -21,6 +21,7 @@
 #include "Core/Slippi/SlippiSavestate.h"
 #include "Core/Slippi/SlippiSpectate.h"
 #include "Core/Slippi/SlippiUser.h"
+#include "Core/Slippi/SlippiWatch.h"
 
 #define MAX_NAME_LENGTH 15
 #define MAX_MESSAGE_LENGTH 25
@@ -101,6 +102,8 @@ class CEXISlippi : public IEXIDevice
 		CMD_JOIN_ROOM = 0xC8,
 		CMD_FETCH_ROOM_LIST = 0xC9,
 		CMD_GET_ROOM_LIST = 0xCA,
+		CMD_ROOM_PRACTICE_OVER = 0xCB,
+		CMD_ROOM_WATCH = 0xCC,
 
 		// Misc
 		CMD_LOG_MESSAGE = 0xD0,
@@ -195,6 +198,8 @@ class CEXISlippi : public IEXIDevice
 	    {CMD_JOIN_ROOM, static_cast<u32>(sizeof(SlippiExiTypes::JoinRoomQuery) - 1)},
 	    {CMD_FETCH_ROOM_LIST, 0},
 	    {CMD_GET_ROOM_LIST, 0},
+	    {CMD_ROOM_PRACTICE_OVER, 0},
+	    {CMD_ROOM_WATCH, 0},
 
 	    // Misc
 	    {CMD_LOG_MESSAGE, 0xFFFF}, // Variable size... will only work if by itself
@@ -287,6 +292,11 @@ class CEXISlippi : public IEXIDevice
 	void handleJoinRoom(const SlippiExiTypes::JoinRoomQuery &query);
 	void handleFetchRoomList();
 	void prepareRoomList();
+	void preparePracticeOver();
+	void handleRoomWatch();
+	void punchAtWatchers();
+	void endWatch();
+	u8 watchStatus();
 	void saveLastRoom(const SlippiExiTypes::GetRoomStateResponse &state);
 	void initEnet();
 
@@ -380,6 +390,38 @@ class CEXISlippi : public IEXIDevice
 	std::unique_ptr<SlippiDirectCodes> teamsCodes;
 	std::unique_ptr<SlippiRoomSession> room;
 	std::string lastRoomCode; // The room saved for rejoining after a crash
+	s64 lastRoomSavedAt = 0;
+
+	// Watching the room's match, as a peer of both players. Null unless watching
+	enum WatchStatus : u8
+	{
+		WATCH_NONE = 0,
+		WATCH_CONNECTING = 1,
+		WATCH_READY = 2,
+		WATCH_FAILED = 3,
+	};
+	std::unique_ptr<SlippiWatchClient> watch_client;
+	bool isWatchAddressSent = false;
+	u64 lastPunchMs = 0;
+
+	// Once a watch has enough to show. Everything a watcher does differently hangs off this, so a
+	// player's match takes the paths it always did. Over still counts, since a watcher that's behind
+	// has the rest of the match to play out of what it already holds
+	bool isWatching() const
+	{
+		if (!watch_client || !watch_client->Ready())
+			return false;
+		SlippiWatchClient::Status st = watch_client->GetStatus();
+		return st == SlippiWatchClient::Status::WATCHING || st == SlippiWatchClient::Status::OVER;
+	}
+
+	// A watch that's over can't fill in anything past what it holds, such as when a player drops. Once
+	// the watcher reaches that point, its match ends the way a player's does when the opponent
+	// disconnects. Only asked while watching
+	bool isWatchCutOff(s32 frame) const
+	{
+		return watch_client->GetStatus() == SlippiWatchClient::Status::OVER && watch_client->LatestFrame() < frame;
+	}
 
 	// The public room list, fetched off the CPU thread
 	enum

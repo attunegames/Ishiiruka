@@ -65,6 +65,13 @@ class SlippiRoomSession
 	virtual SlippiExiTypes::GetRoomStateResponse GetState() = 0;
 	virtual void AddTestPlayer() {}
 
+	// Watching: where this player's match can be reached, and where this watcher watches from
+	virtual void SetMatchAddress(const std::string &address) = 0;
+	virtual void SetWatchAddress(const std::string &address) = 0;
+
+	// The room as this session sees it
+	virtual SlippiRoom CopyRoom() = 0;
+
 	// Leaving on purpose. The session can be destroyed right after
 	virtual void Leave() = 0;
 
@@ -101,6 +108,9 @@ class SlippiRoomHost : public SlippiRoomSession
 	void ReportMatchResult(SlippiRoom::MatchResult result) override;
 	SlippiExiTypes::GetRoomStateResponse GetState() override;
 	void AddTestPlayer() override;
+	void SetMatchAddress(const std::string &address) override;
+	void SetWatchAddress(const std::string &address) override;
+	SlippiRoom CopyRoom() override;
 	void Leave() override;
 	std::unique_ptr<SlippiRoomSession> TakeNext() override;
 
@@ -126,6 +136,13 @@ class SlippiRoomHost : public SlippiRoomSession
 		bool closeRoom = false;
 		bool replaced = false; // Another member took the room over
 		bool gone = false;     // The directory no longer has the room
+
+		// Where members connect: the room's port on the router, as a STUN server saw it. 0 when none
+		// answered, and then only a port UPnP opened lets anyone in
+		u16 publicPort = 0;
+		bool isPortReady = false;
+		bool isPortChanged = false;
+		std::deque<std::string> punches; // Joiners to punch through to
 		std::atomic<bool> netDone{false};
 	};
 
@@ -154,6 +171,9 @@ class SlippiRoomMember : public SlippiRoomSession
 	void HandleLocalAction(u8 action, u8 value0, u8 value1) override;
 	void ReportMatchResult(SlippiRoom::MatchResult result) override;
 	SlippiExiTypes::GetRoomStateResponse GetState() override;
+	void SetMatchAddress(const std::string &address) override;
+	void SetWatchAddress(const std::string &address) override;
+	SlippiRoom CopyRoom() override;
 	void Leave() override;
 	std::unique_ptr<SlippiRoomSession> TakeNext() override;
 

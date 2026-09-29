@@ -6,7 +6,7 @@
 #define REPORT_PLAYER_COUNT 4
 #define ROOM_MAX_MEMBERS 32
 #define ROOM_STAGE_COUNT 6
-#define ROOM_LIST_MAX 9
+#define ROOM_LIST_MAX 50 // As many as the directory lists
 
 namespace SlippiExiTypes
 {
@@ -165,6 +165,8 @@ struct GetRoomStateResponse
 	u8 play_color[2];
 	u8 turn_seconds; // 0xFF when it's nobody's turn
 	u8 host_member;  // 0xFF while nobody is hosting
+	u8 watch_status; // Watching the room's match, see CEXISlippi::WatchStatus
+	u8 match_over;   // The match ended without a result, and the room replays it shortly
 };
 
 struct JoinRoomQuery
@@ -184,6 +186,7 @@ struct RoomListing
 	u8 stage_mode;
 	u8 capacity;
 	u8 member_count;
+	u8 region; // 0xFF when unknown
 };
 
 struct GetRoomListResponse

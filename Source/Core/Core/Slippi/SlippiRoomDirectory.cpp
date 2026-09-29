@@ -38,6 +38,7 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		    {"p_mode", info.mode},
 		    {"p_stage_mode", info.stageMode},
 		    {"p_capacity", info.capacity},
+		    {"p_utc_offset", info.utcOffset},
 		};
 
 		Registration reg;
@@ -50,9 +51,12 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		return reg;
 	}
 
-	ActivityStatus Activity(const Registration &reg, u8 memberCount) override
+	ActivityStatus Activity(const Registration &reg, u8 memberCount, u16 port) override
 	{
-		json args = {{"p_code", reg.code}, {"p_host_token", reg.hostToken}, {"p_member_count", memberCount}};
+		json args = {{"p_code", reg.code},
+		             {"p_host_token", reg.hostToken},
+		             {"p_member_count", memberCount},
+		             {"p_port", port ? json(port) : json(nullptr)}};
 		json resp;
 		if (!call("room_activity", args, resp) || !resp.is_string())
 			return ActivityStatus::UNAVAILABLE;
@@ -107,9 +111,29 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		call("room_close", args, resp);
 	}
 
-	JoinResult Join(const std::string &code, const std::string &password) override
+	bool JoinRequests(const Registration &reg, s64 afterId, std::vector<JoinRequest> &out) override
 	{
-		json args = {{"p_code", code}, {"p_password", password.empty() ? json(nullptr) : json(password)}};
+		json args = {{"p_code", reg.code}, {"p_host_token", reg.hostToken}, {"p_after", afterId}};
+		json resp;
+		if (!call("room_join_requests", args, resp) || !resp.is_array())
+			return false;
+
+		out.clear();
+		for (const json &el : resp)
+		{
+			JoinRequest request;
+			request.id = el.value("id", static_cast<s64>(0));
+			request.address = el.value("address", "");
+			out.push_back(request);
+		}
+		return true;
+	}
+
+	JoinResult Join(const std::string &code, const std::string &password, u16 port) override
+	{
+		json args = {{"p_code", code},
+		             {"p_password", password.empty() ? json(nullptr) : json(password)},
+		             {"p_port", port ? json(port) : json(nullptr)}};
 
 		JoinResult result;
 		json resp;
@@ -153,6 +177,11 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 			l.stageMode = el.value("stage_mode", 0);
 			l.capacity = el.value("capacity", 0);
 			l.memberCount = el.value("member_count", 0);
+
+			// Rooms from countries outside the list's regions have none
+			auto region = el.find("region");
+			if (region != el.end() && region->is_number())
+				l.region = region->get<u8>();
 			out.push_back(l);
 		}
 		return true;
@@ -179,6 +208,9 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &receive);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &received);
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000);
+
+		// Called from worker threads, where a timeout must not use signals
+		curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
 		// The host's address is taken from this connection, and rooms connect over IPv4
 		curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
@@ -210,10 +242,14 @@ class NoRoomDirectory : public SlippiRoomDirectory
 {
   public:
 	Registration Register(const RoomInfo &info) override { return {}; }
-	ActivityStatus Activity(const Registration &reg, u8 memberCount) override { return ActivityStatus::UNAVAILABLE; }
+	ActivityStatus Activity(const Registration &reg, u8 memberCount, u16 port) override
+	{
+		return ActivityStatus::UNAVAILABLE;
+	}
+	bool JoinRequests(const Registration &reg, s64 afterId, std::vector<JoinRequest> &out) override { return false; }
 	TakeOverResult TakeOver(const std::string &code, int generation, const RoomInfo &info) override { return {}; }
 	void Unregister(const Registration &reg) override {}
-	JoinResult Join(const std::string &code, const std::string &password) override { return {}; }
+	JoinResult Join(const std::string &code, const std::string &password, u16 port) override { return {}; }
 	bool List(std::vector<Listing> &out) override { return false; }
 };
 } // namespace

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <random>
 #include <set>
@@ -13,6 +14,7 @@
 #include "Common/StringUtil.h"
 #include "Common/Thread.h"
 #include "Common/Timer.h"
+#include "Core/Slippi/SlippiStun.h"
 
 #ifdef USE_UPNP
 #include <miniupnpc.h>
@@ -25,7 +27,8 @@ using json = nlohmann::json;
 
 namespace
 {
-const int CONNECT_TIMEOUT_MS = 5000;
+// Long enough for the host to pick a join request up and punch through to the joiner
+const int CONNECT_TIMEOUT_MS = 10000;
 const int SERVICE_INTERVAL_MS = 20;
 
 // How long a peer can go unheard before its connection counts as dropped
@@ -43,6 +46,9 @@ const u32 RECONNECT_WAIT_MS = 20000;
 // Time given to messages already sent before a connection closes
 const u32 DRAIN_MS = 1000;
 
+// How often a host checks for join requests to punch through to
+const u32 JOIN_POLL_MS = 1500;
+
 // Activity is reported at most this often, and retried after this long when the directory can't be
 // reached
 const u32 ACTIVITY_INTERVAL_MS = 2000;
@@ -50,6 +56,9 @@ const u32 ACTIVITY_RETRY_MS = 5000;
 
 // A room with no members joining or leaving and no sets finishing for this long closes
 const u32 IDLE_CLOSE_MS = 60 * 60 * 1000;
+
+// The directory times the hour from the last activity it was told about, which can trail ours
+const u32 IDLE_SLACK_MS = 60 * 1000;
 
 #ifdef USE_UPNP
 // Looking for a router that isn't there takes several seconds, and a new host can't take over until
@@ -144,6 +153,46 @@ void drain(ENetHost *host)
 	}
 }
 
+// Routers only keep an outside port open while packets go out through it, so an idle host asks again
+// this often
+const u32 STUN_REFRESH_MS = 20000;
+
+void closeHost(ENetHost *host)
+{
+	SlippiStun::Forget(host);
+	enet_host_destroy(host);
+}
+
+// Minutes ahead of UTC here at the given time
+int utcOffsetAt(std::time_t time)
+{
+	std::tm local = *std::localtime(&time);
+	std::tm utc = *std::gmtime(&time);
+	local.tm_isdst = 0;
+	return static_cast<int>(std::difftime(std::mktime(&local), std::mktime(&utc)) / 60);
+}
+
+// The standard time offset here, which tells the directory which side of North America a room is on.
+// Daylight saving is left out, or Mountain in summer would look like Central
+int localUtcOffset()
+{
+	std::time_t now = std::time(nullptr);
+	std::tm date = *std::localtime(&now);
+	date.tm_mday = 1;
+	date.tm_hour = 12;
+	date.tm_min = 0;
+	date.tm_sec = 0;
+
+	// One of January and July is in daylight saving wherever it's used, and that one is ahead
+	date.tm_mon = 0;
+	date.tm_isdst = -1;
+	int january = utcOffsetAt(std::mktime(&date));
+	date.tm_mon = 6;
+	date.tm_isdst = -1;
+	int july = utcOffsetAt(std::mktime(&date));
+	return std::min(january, july);
+}
+
 SlippiRoomSession::ConnectionError joinError(SlippiRoomDirectory::JoinStatus status)
 {
 	switch (status)
@@ -197,6 +246,8 @@ class SlippiRoomHost::NetThread
 	void checkDirectory();
 	void checkReconnects(u32 now);
 	void trackActivity(u32 now);
+	void refreshPort();
+	void punchJoiners();
 
 	std::shared_ptr<Shared> m_shared;
 	Identity m_identity;
@@ -213,6 +264,7 @@ class SlippiRoomHost::NetThread
 	bool m_verified = false;
 	bool m_stop = false;
 	bool m_drain = false;
+	u32 m_lastStunMs = 0;
 };
 
 void SlippiRoomHost::NetThread::Run()
@@ -220,8 +272,25 @@ void SlippiRoomHost::NetThread::Run()
 	// Keeps networking up while this thread runs, even if emulation stops first
 	enet_initialize();
 
+	// Tests on one computer connect through localhost, so they need the room's own port instead
+	std::string publicIp;
+	u16 publicPort = 0;
+#ifndef LOCAL_TESTING
+	SlippiStun::Discover(m_host, publicIp, publicPort);
+#endif
+	if (publicPort)
+		INFO_LOG(SLIPPI_ONLINE, "[Rooms] The room's outside port is %d", publicPort);
+	else
+		WARN_LOG(SLIPPI_ONLINE, "[Rooms] No STUN server answered, only a port UPnP opens lets members in");
+	{
+		std::lock_guard<std::mutex> lk(m_shared->lock);
+		m_shared->publicPort = publicPort;
+		m_shared->isPortReady = true;
+	}
+
 	m_startMs = Common::Timer::GetTimeMs();
 	m_lastActivityMs = m_startMs;
+	m_lastStunMs = m_startMs;
 	{
 		std::lock_guard<std::mutex> lk(m_shared->lock);
 		SlippiRoom &room = m_shared->room;
@@ -275,6 +344,9 @@ void SlippiRoomHost::NetThread::Run()
 			}
 		}
 
+		refreshPort();
+		punchJoiners();
+
 		std::lock_guard<std::mutex> lk(m_shared->lock);
 		u32 now = Common::Timer::GetTimeMs();
 		checkDirectory();
@@ -300,10 +372,54 @@ void SlippiRoomHost::NetThread::Run()
 		drain(m_host);
 	else
 		enet_host_flush(m_host);
-	enet_host_destroy(m_host);
+	closeHost(m_host);
 
 	m_shared->netDone = true;
 	enet_deinitialize();
+}
+
+// Keeps the router's outside port open, and follows it when the router moves it
+void SlippiRoomHost::NetThread::refreshPort()
+{
+	std::string ip;
+	u16 port = 0;
+	SlippiStun::TakeReply(m_host, ip, port);
+	u32 now = Common::Timer::GetTimeMs();
+	bool isRefreshDue;
+	{
+		std::lock_guard<std::mutex> lk(m_shared->lock);
+		if (port && port != m_shared->publicPort)
+		{
+			INFO_LOG(SLIPPI_ONLINE, "[Rooms] The room's outside port moved to %d", port);
+			m_shared->publicPort = port;
+			m_shared->isPortChanged = true;
+		}
+		isRefreshDue = m_shared->publicPort && now - m_lastStunMs >= STUN_REFRESH_MS;
+	}
+
+	// Looking the server up can take a moment, so it isn't done while holding the room
+	if (isRefreshDue)
+	{
+		m_lastStunMs = now;
+		SlippiStun::SendRequest(m_host);
+	}
+}
+
+// Joiners connect to the room's outside port, which the router only lets them through once the room
+// has sent something their way
+void SlippiRoomHost::NetThread::punchJoiners()
+{
+	std::deque<std::string> punches;
+	{
+		std::lock_guard<std::mutex> lk(m_shared->lock);
+		punches.swap(m_shared->punches);
+	}
+
+	for (const std::string &address : punches)
+	{
+		INFO_LOG(SLIPPI_ONLINE, "[Rooms] Punching through to a joiner");
+		SlippiStun::Punch(m_host, address);
+	}
 }
 
 void SlippiRoomHost::NetThread::onReceive(ENetPeer *peer, const json &msg)
@@ -337,6 +453,14 @@ void SlippiRoomHost::NetThread::onReceive(ENetPeer *peer, const json &msg)
 	else if (type == "leave")
 	{
 		m_leavingPeers.insert(peer);
+	}
+	else if (type == "matchAddress")
+	{
+		room.SetMatchAddress(member, msg.value("address", ""));
+	}
+	else if (type == "watchAddress")
+	{
+		room.SetWatchAddress(member, msg.value("address", ""));
 	}
 }
 
@@ -510,7 +634,7 @@ void SlippiRoomHost::NetThread::stepDown()
 
 void SlippiRoomHost::NetThread::close(ConnectionError error)
 {
-	broadcast({{"type", "closed"}});
+	broadcast({{"type", "closed"}, {"error", error}});
 	m_shared->status = STATUS_FAILED;
 	m_shared->error = error;
 	m_shared->closeRoom = true;
@@ -530,8 +654,11 @@ void SlippiRoomHost::NetThread::checkDirectory()
 	}
 	else if (m_shared->gone)
 	{
+		// The directory drops a room after an hour without activity, or once its host hasn't been heard
+		// from for a couple of minutes, such as after losing the internet
 		WARN_LOG(SLIPPI_ONLINE, "[Rooms] The directory no longer has room %s", m_shared->room.Code().c_str());
-		close(m_tookOver && !m_shared->registered ? CONNECT_DISCONNECTED : CONNECT_IDLE);
+		bool isIdle = Common::Timer::GetTimeMs() - m_lastActivityMs >= IDLE_CLOSE_MS - IDLE_SLACK_MS;
+		close(isIdle ? CONNECT_IDLE : CONNECT_DISCONNECTED);
 	}
 }
 
@@ -597,6 +724,7 @@ SlippiRoomHost::SlippiRoomHost(const Identity &identity, const SlippiExiTypes::C
 	info.mode = room.Mode();
 	info.stageMode = room.StageMode();
 	info.capacity = room.Capacity();
+	info.utcOffset = localUtcOffset();
 	start(info, false);
 }
 
@@ -637,6 +765,7 @@ void SlippiRoomHost::start(SlippiRoomDirectory::RoomInfo info, bool isTakeOver)
 		return;
 	}
 
+	host->intercept = SlippiStun::Intercept;
 	info.port = port;
 	std::string takeOverCode = isTakeOver ? m_shared->room.Code() : "";
 	std::thread(&SlippiRoomHost::directoryThread, m_shared, info, takeOverCode, m_shared->room.Generation()).detach();
@@ -654,11 +783,29 @@ void SlippiRoomHost::directoryThread(std::shared_ptr<Shared> shared, SlippiRoomD
 {
 	auto directory = SlippiRoomDirectory::Create();
 
+	bool mapped = false;
+	u16 localPort = info.port;
 #ifdef USE_UPNP
 	UPNPUrls urls = {};
 	IGDdatas data = {};
-	bool mapped = mapPort(info.port, urls, data);
+	mapped = mapPort(localPort, urls, data);
 #endif
+
+	// Members connect to the port UPnP opened, or else the outside port a STUN server saw, which the
+	// room's connection looks up before anything else
+	while (!shared->netDone)
+	{
+		{
+			std::lock_guard<std::mutex> lk(shared->lock);
+			if (shared->isPortReady)
+			{
+				if (!mapped && shared->publicPort)
+					info.port = shared->publicPort;
+				break;
+			}
+		}
+		Common::SleepCurrentThread(50);
+	}
 
 	SlippiRoomDirectory::Registration reg;
 	bool isRegistered = false;
@@ -709,18 +856,41 @@ void SlippiRoomHost::directoryThread(std::shared_ptr<Shared> shared, SlippiRoomD
 	}
 
 	u32 lastReportMs = 0;
+	u32 lastPollMs = 0;
 	u32 waitMs = 0;
+	s64 lastRequestId = 0;
+	std::vector<SlippiRoomDirectory::JoinRequest> requests;
 	while (isRegistered && !shared->netDone)
 	{
+		u32 now = Common::Timer::GetTimeMs();
+		if (now - lastPollMs >= JOIN_POLL_MS)
+		{
+			lastPollMs = now;
+			if (directory->JoinRequests(reg, lastRequestId, requests))
+			{
+				std::lock_guard<std::mutex> lk(shared->lock);
+				for (const auto &request : requests)
+				{
+					lastRequestId = std::max(lastRequestId, request.id);
+					shared->punches.push_back(request.address);
+				}
+			}
+		}
+
 		bool isWanted;
 		u8 memberCount;
+		u16 port = 0;
 		{
 			std::lock_guard<std::mutex> lk(shared->lock);
 			isWanted = shared->activityWanted;
 			memberCount = shared->memberCount;
+			if (!mapped && shared->isPortChanged)
+			{
+				isWanted = true;
+				port = shared->publicPort;
+			}
 		}
 
-		u32 now = Common::Timer::GetTimeMs();
 		if (!isWanted || now - lastReportMs < waitMs)
 		{
 			Common::SleepCurrentThread(100);
@@ -730,15 +900,17 @@ void SlippiRoomHost::directoryThread(std::shared_ptr<Shared> shared, SlippiRoomD
 		{
 			std::lock_guard<std::mutex> lk(shared->lock);
 			shared->activityWanted = false;
+			shared->isPortChanged = false;
 		}
 		lastReportMs = now;
 		waitMs = ACTIVITY_INTERVAL_MS;
 
-		auto status = directory->Activity(reg, memberCount);
+		auto status = directory->Activity(reg, memberCount, port);
 		if (status == SlippiRoomDirectory::ActivityStatus::UNAVAILABLE)
 		{
 			std::lock_guard<std::mutex> lk(shared->lock);
 			shared->activityWanted = true;
+			shared->isPortChanged = port != 0;
 			waitMs = ACTIVITY_RETRY_MS;
 		}
 		else if (status == SlippiRoomDirectory::ActivityStatus::REPLACED)
@@ -764,7 +936,7 @@ void SlippiRoomHost::directoryThread(std::shared_ptr<Shared> shared, SlippiRoomD
 
 #ifdef USE_UPNP
 	if (mapped)
-		unmapPort(info.port, urls, data);
+		unmapPort(localPort, urls, data);
 #endif
 }
 
@@ -801,6 +973,26 @@ void SlippiRoomHost::AddTestPlayer()
 {
 	std::lock_guard<std::mutex> lk(m_shared->lock);
 	m_shared->room.AddTestPlayer();
+}
+
+void SlippiRoomHost::SetMatchAddress(const std::string &address)
+{
+	std::lock_guard<std::mutex> lk(m_shared->lock);
+	SlippiRoom &room = m_shared->room;
+	room.SetMatchAddress(room.FindMember(m_identity.connectCode), address);
+}
+
+void SlippiRoomHost::SetWatchAddress(const std::string &address)
+{
+	std::lock_guard<std::mutex> lk(m_shared->lock);
+	SlippiRoom &room = m_shared->room;
+	room.SetWatchAddress(room.FindMember(m_identity.connectCode), address);
+}
+
+SlippiRoom SlippiRoomHost::CopyRoom()
+{
+	std::lock_guard<std::mutex> lk(m_shared->lock);
+	return m_shared->room;
 }
 
 void SlippiRoomHost::Leave()
@@ -845,7 +1037,7 @@ class SlippiRoomMember::NetThread
 
   private:
 	// Returns false once this member is done with the room
-	bool connect(const SlippiRoomDirectory::JoinResult &joinResult);
+	bool connect(const SlippiRoomDirectory::JoinResult &joinResult, ENetHost *client);
 	bool onHostGone(const std::string &handoverTo, const std::string &handoverReason);
 	int candidateRank();
 	void promote();
@@ -878,48 +1070,78 @@ void SlippiRoomMember::NetThread::Run()
 			break;
 		}
 
-		auto joinResult = directory->Join(m_shared->code, m_shared->password);
-		if (!m_shared->running || m_shared->leaving)
-			break;
-
-		if (joinResult.status != SlippiRoomDirectory::JoinStatus::OK)
+		// While the host is changing, only look for whether anyone has taken over. The socket and the
+		// join request the new host punches through to are only set up once someone has
+		if (m_isReconnecting)
 		{
-			if (!m_isReconnecting)
-			{
-				fail(joinError(joinResult.status));
+			auto check = directory->Join(m_shared->code, m_shared->password, 0);
+			if (!m_shared->running || m_shared->leaving)
 				break;
-			}
-			if (joinResult.status == SlippiRoomDirectory::JoinStatus::NOT_FOUND)
+			if (check.status == SlippiRoomDirectory::JoinStatus::NOT_FOUND)
 			{
 				fail(CONNECT_DISCONNECTED);
 				break;
 			}
 
-			Common::SleepCurrentThread(RETRY_MS);
-			continue;
+			bool isTakenOver =
+			    check.status == SlippiRoomDirectory::JoinStatus::OK && check.generation > m_knownGeneration;
+			if (!isTakenOver)
+			{
+				// Take over once the candidates before this member had their turn
+				if (check.status == SlippiRoomDirectory::JoinStatus::OK && rank > 0 &&
+				    Common::Timer::GetTimeMs() - m_lostMs >= rank * CANDIDATE_WAIT_MS)
+				{
+					promote();
+					break;
+				}
+
+				Common::SleepCurrentThread(RETRY_MS);
+				continue;
+			}
 		}
 
-		// Nobody has taken over yet. Take over once the candidates before this member had their turn
-		if (m_isReconnecting && joinResult.generation <= m_knownGeneration)
+		// The outside port a STUN server sees for this connection goes with the join, so the host can
+		// punch through to it
+		ENetHost *client = enet_host_create(nullptr, 1, 1, 0, 0);
+		if (!client)
 		{
-			if (rank > 0 && Common::Timer::GetTimeMs() - m_lostMs >= rank * CANDIDATE_WAIT_MS)
+			fail(CONNECT_UNREACHABLE);
+			break;
+		}
+		client->intercept = SlippiStun::Intercept;
+		std::string publicIp;
+		u16 port = 0;
+		SlippiStun::Discover(client, publicIp, port);
+
+		auto joinResult = directory->Join(m_shared->code, m_shared->password, port);
+		if (!m_shared->running || m_shared->leaving)
+		{
+			closeHost(client);
+			break;
+		}
+
+		if (joinResult.status != SlippiRoomDirectory::JoinStatus::OK)
+		{
+			closeHost(client);
+			if (!m_isReconnecting)
 			{
-				promote();
+				fail(joinError(joinResult.status));
 				break;
 			}
 
+			// The room changed since it was looked up, so look again
 			Common::SleepCurrentThread(RETRY_MS);
 			continue;
 		}
 
-		if (!connect(joinResult))
+		if (!connect(joinResult, client))
 			break;
 	}
 
 	enet_deinitialize();
 }
 
-bool SlippiRoomMember::NetThread::connect(const SlippiRoomDirectory::JoinResult &joinResult)
+bool SlippiRoomMember::NetThread::connect(const SlippiRoomDirectory::JoinResult &joinResult, ENetHost *client)
 {
 	// Rooms connect over IPv4
 	std::vector<std::string> parts;
@@ -932,17 +1154,17 @@ bool SlippiRoomMember::NetThread::connect(const SlippiRoomDirectory::JoinResult 
 	host = "127.0.0.1";
 #endif
 
-	ENetHost *client = enet_host_create(nullptr, 1, 1, 0, 0);
-	if (!client)
-	{
-		fail(CONNECT_UNREACHABLE);
-		return false;
-	}
-
 	ENetAddress addr;
 	enet_address_set_host(&addr, host.c_str());
 	addr.port = port;
 	ENetPeer *peer = enet_host_connect(client, &addr, 1, 0);
+	if (!peer)
+	{
+		closeHost(client);
+		fail(CONNECT_UNREACHABLE);
+		return false;
+	}
+	enet_peer_timeout(peer, 0, CONNECT_TIMEOUT_MS, CONNECT_TIMEOUT_MS);
 
 	INFO_LOG(SLIPPI_ONLINE, "[Rooms] Connecting to room %s", m_shared->code.c_str());
 
@@ -958,7 +1180,7 @@ bool SlippiRoomMember::NetThread::connect(const SlippiRoomDirectory::JoinResult 
 
 	if (!isConnected)
 	{
-		enet_host_destroy(client);
+		closeHost(client);
 		if (!m_shared->running || m_shared->leaving)
 			return false;
 		if (!m_isReconnecting)
@@ -996,14 +1218,14 @@ bool SlippiRoomMember::NetThread::connect(const SlippiRoomDirectory::JoinResult 
 			sendMessage(peer, {{"type", "leave"}});
 			enet_peer_disconnect_later(peer, 0);
 			drain(client);
-			enet_host_destroy(client);
+			closeHost(client);
 			return false;
 		}
 		if (!m_shared->running)
 		{
 			enet_peer_disconnect(peer, 0);
 			enet_host_flush(client);
-			enet_host_destroy(client);
+			closeHost(client);
 			return false;
 		}
 
@@ -1031,7 +1253,7 @@ bool SlippiRoomMember::NetThread::connect(const SlippiRoomDirectory::JoinResult 
 			}
 			else if (type == "closed")
 			{
-				fail(CONNECT_IDLE);
+				fail(static_cast<ConnectionError>(msg.value("error", static_cast<int>(CONNECT_IDLE))));
 			}
 			else if (type == "reject")
 			{
@@ -1048,7 +1270,7 @@ bool SlippiRoomMember::NetThread::connect(const SlippiRoomDirectory::JoinResult 
 		}
 		else if (net > 0 && netEvent.type == ENET_EVENT_TYPE_DISCONNECT)
 		{
-			enet_host_destroy(client);
+			closeHost(client);
 			return onHostGone(handoverTo, handoverReason);
 		}
 
@@ -1183,6 +1405,24 @@ void SlippiRoomMember::ReportMatchResult(SlippiRoom::MatchResult result)
 {
 	std::lock_guard<std::mutex> lk(m_shared->lock);
 	m_shared->outgoing.push_back({{"type", "result"}, {"result", result}});
+}
+
+void SlippiRoomMember::SetMatchAddress(const std::string &address)
+{
+	std::lock_guard<std::mutex> lk(m_shared->lock);
+	m_shared->outgoing.push_back({{"type", "matchAddress"}, {"address", address}});
+}
+
+void SlippiRoomMember::SetWatchAddress(const std::string &address)
+{
+	std::lock_guard<std::mutex> lk(m_shared->lock);
+	m_shared->outgoing.push_back({{"type", "watchAddress"}, {"address", address}});
+}
+
+SlippiRoom SlippiRoomMember::CopyRoom()
+{
+	std::lock_guard<std::mutex> lk(m_shared->lock);
+	return m_shared->room;
 }
 
 SlippiExiTypes::GetRoomStateResponse SlippiRoomMember::GetState()

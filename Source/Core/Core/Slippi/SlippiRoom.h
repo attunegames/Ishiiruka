@@ -72,6 +72,10 @@ class SlippiRoom
 	static const int TURN_SECONDS = 30;
 	static const int GRACE_SECONDS = 3;
 
+	// A match that ended without a result is replayed after this long. Long enough for a player who
+	// dropped to be noticed first, so they forfeit the set instead
+	static const int REPLAY_DELAY_MS = 10000;
+
 	// Players who drop keep their crowns this long, and a lost host gets the room back
 	static const int REJOIN_WINDOW_MS = 2 * 60 * 1000;
 
@@ -102,6 +106,14 @@ class SlippiRoom
 	// Counts joins, leaves and finished sets, which the host reports to the directory
 	u32 ActivityCount() { return activityCount; }
 
+	// Watching. Players say where their match can be reached, and watchers where they watch from so
+	// the players can punch through to them
+	void SetMatchAddress(int member, const std::string &address);
+	void SetWatchAddress(int member, const std::string &address);
+	std::string SideMatchAddress(Side side) const;
+	std::string SideName(Side side) const;
+	std::vector<std::string> WatchAddresses() const;
+
 	void HandleAction(int member, u8 action, u8 value0, u8 value1);
 	void ReportMatchResult(int member, MatchResult result);
 	void Update();
@@ -113,7 +125,6 @@ class SlippiRoom
 	u8 Mode() { return mode; }
 	u8 StageMode() { return stageMode; }
 	u8 Capacity() { return capacity; }
-	std::string HostName() { return members.empty() ? "" : members[0].name; }
 
 	// What the host sends its members, and how a member's copy is made from it
 	nlohmann::json ToJson();
@@ -130,6 +141,8 @@ class SlippiRoom
 		u8 charColor = 0;
 		u8 crowns = 0;
 		bool isTestPlayer = false;
+		std::string matchAddress; // Where watchers connect while this member plays
+		std::string watchAddress; // Where this member watches from
 	};
 
 	// A player who dropped rather than leaving on purpose
@@ -190,6 +203,8 @@ class SlippiRoom
 
 	u32 phaseStartMs = 0;
 	u32 turnStartMs = 0;
+	bool isMatchOver = false; // The match ended without a result and waits to be replayed
+	u32 matchOverMs = 0;
 
 	// A member's copy shows the host's timer rather than timing turns itself
 	bool isCopy = false;

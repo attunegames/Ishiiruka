@@ -77,6 +77,11 @@ void SlippiRoom::RemoveMember(int member)
 	INFO_LOG(SLIPPI_ONLINE, "[Room] %s left the room", members[member].connectCode.c_str());
 	activityCount++;
 
+	// Leaving a set that has started forfeits it. Room matches can't be quit, so this is how a player
+	// quits out: by leaving or dropping, and the one who stayed wins
+	if (phase != PHASE_WAITING && isOnSide(member))
+		finishSet(sides[SIDE_WINNER] == member ? SIDE_CHALLENGER : SIDE_WINNER);
+
 	// Leaving ends any set the member is in. The other player stays on as the winner
 	if (isOnSide(member))
 	{
@@ -207,6 +212,39 @@ std::vector<std::string> SlippiRoom::Successors()
 	return codes;
 }
 
+void SlippiRoom::SetMatchAddress(int member, const std::string &address)
+{
+	if (member >= 0 && member < static_cast<int>(members.size()))
+		members[member].matchAddress = address;
+}
+
+void SlippiRoom::SetWatchAddress(int member, const std::string &address)
+{
+	if (member >= 0 && member < static_cast<int>(members.size()))
+		members[member].watchAddress = address;
+}
+
+std::string SlippiRoom::SideMatchAddress(Side side) const
+{
+	return sides[side] >= 0 ? members[sides[side]].matchAddress : "";
+}
+
+std::string SlippiRoom::SideName(Side side) const
+{
+	return sides[side] >= 0 ? members[sides[side]].name : "";
+}
+
+std::vector<std::string> SlippiRoom::WatchAddresses() const
+{
+	std::vector<std::string> addresses;
+	for (const Member &m : members)
+	{
+		if (!m.watchAddress.empty())
+			addresses.push_back(m.watchAddress);
+	}
+	return addresses;
+}
+
 bool SlippiRoom::IsReturningHost(const std::string &connectCode)
 {
 	return !returningHostCode.empty() && connectCode == returningHostCode;
@@ -246,12 +284,12 @@ void SlippiRoom::HandleAction(int member, u8 action, u8 value0, u8 value1)
 			m.charColor = value0 % maxColors(m.charId);
 		break;
 	case ACTION_MATCH_ENDED:
-		// Nothing reported a result, such as after a disconnect, so the pair plays again
-		if (phase == PHASE_PLAYING && isOnSide(member))
+		// Nothing reported a result, such as when the players' connection to each other failed. The pair
+		// plays again after a moment, unless one of them drops in the meantime and forfeits
+		if (phase == PHASE_PLAYING && isOnSide(member) && !isMatchOver)
 		{
-			WARN_LOG(SLIPPI_ONLINE, "[Room] Match ended without a result, replaying it");
-			phase = PHASE_WAITING;
-			phaseStartMs = Common::Timer::GetTimeMs();
+			isMatchOver = true;
+			matchOverMs = Common::Timer::GetTimeMs();
 		}
 		break;
 	case ACTION_FINISH_SET:
@@ -290,6 +328,13 @@ void SlippiRoom::Update()
 
 	u32 now = Common::Timer::GetTimeMs();
 	expireDropped();
+
+	if (phase == PHASE_PLAYING && isMatchOver && now - matchOverMs >= REPLAY_DELAY_MS)
+	{
+		WARN_LOG(SLIPPI_ONLINE, "[Room] Match ended without a result, replaying it");
+		phase = PHASE_WAITING;
+		phaseStartMs = now;
+	}
 
 	// Start the set once both sides are filled and the delay has passed
 	if (phase == PHASE_WAITING)
@@ -333,7 +378,9 @@ json SlippiRoom::ToJson()
 		                    {"char", m.charId},
 		                    {"color", m.charColor},
 		                    {"crowns", m.crowns},
-		                    {"test", m.isTestPlayer}});
+		                    {"test", m.isTestPlayer},
+		                    {"match", m.matchAddress},
+		                    {"watch", m.watchAddress}});
 	}
 
 	// Times are sent as ages, since clocks differ between computers
@@ -372,6 +419,8 @@ json SlippiRoom::ToJson()
 	    {"playChar", {playChar[0], playChar[1]}},
 	    {"playColor", {playColor[0], playColor[1]}},
 	    {"turnSeconds", turnSeconds()},
+	    {"matchOver", isMatchOver},
+	    {"matchOverAge", now - matchOverMs},
 	};
 }
 
@@ -396,6 +445,8 @@ void SlippiRoom::FromJson(const json &j)
 		m.charColor = jm.value("color", 0);
 		m.crowns = jm.value("crowns", 0);
 		m.isTestPlayer = jm.value("test", false);
+		m.matchAddress = jm.value("match", "");
+		m.watchAddress = jm.value("watch", "");
 		members.push_back(m);
 	}
 
@@ -438,6 +489,8 @@ void SlippiRoom::FromJson(const json &j)
 	phase = static_cast<Phase>(j.value("phase", 0));
 	stageIdx = j.value("stage", 0);
 	copyTurnSeconds = j.value("turnSeconds", -1);
+	isMatchOver = j.value("matchOver", false);
+	matchOverMs = now - j.value("matchOverAge", 0u);
 }
 
 SlippiExiTypes::GetRoomStateResponse SlippiRoom::GetState(int localMember)
@@ -483,6 +536,7 @@ SlippiExiTypes::GetRoomStateResponse SlippiRoom::GetState(int localMember)
 	for (int i = 0; i < STAGE_COUNT; i++)
 		resp.struck[i] = struck[i];
 	resp.stage_idx = static_cast<u8>(stageIdx);
+	resp.match_over = phase == PHASE_PLAYING && isMatchOver;
 
 	int seconds = turnSeconds();
 	resp.turn_seconds = seconds < 0 ? 0xFF : static_cast<u8>(seconds);
@@ -589,7 +643,9 @@ void SlippiRoom::finishSet(Side winner)
 
 	if (winner == SIDE_WINNER)
 	{
-		streak++;
+		// Two in a room never crown, so a streak can run long
+		if (streak < 255)
+			streak++;
 		beaten |= 1u << losingMember;
 	}
 	else
@@ -600,6 +656,7 @@ void SlippiRoom::finishSet(Side winner)
 	sides[SIDE_WINNER] = winningMember;
 	sides[SIDE_CHALLENGER] = -1;
 	phase = PHASE_WAITING;
+	activityCount++;
 
 	// Keep showing the winner's character from the last set
 	hasPicked[SIDE_WINNER] = true;
@@ -624,8 +681,13 @@ void SlippiRoom::finishSet(Side winner)
 	phaseStartMs = Common::Timer::GetTimeMs();
 }
 
+// A crown is for beating a line of challengers. With nobody else waiting, such as with two in the
+// room, the winner just stays on and the streak grows
 bool SlippiRoom::hasBeatenEveryone()
 {
+	if (queue.empty())
+		return false;
+
 	for (int member : queue)
 	{
 		if (!(beaten & (1u << member)))
@@ -704,6 +766,7 @@ void SlippiRoom::startMatch()
 	for (int side = 0; side < 2; side++)
 	{
 		Member &m = members[sides[side]];
+		m.matchAddress.clear();
 		playChar[side] = m.charId;
 		playColor[side] = m.charColor;
 
@@ -715,6 +778,7 @@ void SlippiRoom::startMatch()
 	}
 
 	phase = PHASE_PLAYING;
+	isMatchOver = false;
 	INFO_LOG(SLIPPI_ONLINE, "[Room] Match starting: %d vs %d on stage %d", playChar[0], playChar[1], stageIdx);
 }
 
