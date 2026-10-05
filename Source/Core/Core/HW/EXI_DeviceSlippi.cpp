@@ -163,9 +163,6 @@ CEXISlippi::CEXISlippi()
 	// @TODO: Eventually we should move `GetSlippiUserConfigFolder` out of the File module.
 	std::string userConfigFolder = File::GetSlippiUserConfigFolder();
 
-	// The Rust device reads the account once it's created, so it has to be in place first
-	SlippiUser::AdoptLauncherAccount();
-
 	SlippiRustEXIConfig slprs_exi_config;
 	slprs_exi_config.iso_path = isoPath.c_str();
 	slprs_exi_config.user_config_folder = userConfigFolder.c_str();
