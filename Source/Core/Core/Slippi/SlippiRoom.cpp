@@ -21,8 +21,8 @@ SlippiRoom::SlippiRoom(const SlippiExiTypes::CreateRoomQuery &query)
     : SlippiRoom()
 {
 	visibility = query.visibility;
-	mode = query.mode;
-	stageMode = query.stage_mode;
+	mode = query.mode < MODE_COUNT ? query.mode : 0;
+	stageMode = query.stage_mode < STAGE_MODE_COUNT ? query.stage_mode : 0;
 
 	// A room holds at most the members the game can be sent
 	int maxMembers = MAX_MEMBERS;
@@ -307,7 +307,8 @@ void SlippiRoom::ReportMatchResult(int member, MatchResult result)
 	// Replay a draw with the same pair
 	if (result == RESULT_DRAW)
 	{
-		INFO_LOG(SLIPPI_ONLINE, "[Room] Match was a draw, replaying it");
+		INFO_LOG(SLIPPI_ONLINE, "[Room] %s reported no winner, replaying the match",
+		         members[member].connectCode.c_str());
 		phase = PHASE_WAITING;
 		phaseStartMs = Common::Timer::GetTimeMs();
 		return;
@@ -491,6 +492,50 @@ void SlippiRoom::FromJson(const json &j)
 	copyTurnSeconds = j.value("turnSeconds", -1);
 	isMatchOver = j.value("matchOver", false);
 	matchOverMs = now - j.value("matchOverAge", 0u);
+
+	// The copy is trusted no further than the game can take. The lists are capped at what the game
+	// is sent, every index has to name a member, and every id has to be one the game has
+	if (members.size() > MAX_MEMBERS)
+		members.resize(MAX_MEMBERS);
+	int count = static_cast<int>(members.size());
+	auto isMember = [count](int member) { return member >= 0 && member < count; };
+
+	std::vector<int> validQueue;
+	for (int member : queue)
+	{
+		if (isMember(member) && std::find(validQueue.begin(), validQueue.end(), member) == validQueue.end())
+			validQueue.push_back(member);
+	}
+	queue = validQueue;
+
+	for (int i = 0; i < 2; i++)
+	{
+		if (!isMember(sides[i]))
+			sides[i] = -1;
+		if (playChar[i] >= CHAR_RANDOM)
+			playChar[i] = 0;
+		playColor[i] %= maxColors(playChar[i]);
+	}
+	if (!isMember(crowned))
+		crowned = -1;
+
+	for (Member &m : members)
+	{
+		if (m.charId > CHAR_RANDOM)
+			m.charId = CHAR_RANDOM;
+		m.charColor = m.charId < CHAR_RANDOM ? m.charColor % maxColors(m.charId) : 0;
+	}
+
+	int maxMembers = MAX_MEMBERS;
+	capacity = static_cast<u8>(std::max(2, std::min<int>(capacity, maxMembers)));
+	if (mode >= MODE_COUNT)
+		mode = 0;
+	if (stageMode >= STAGE_MODE_COUNT)
+		stageMode = 0;
+	if (phase > PHASE_PLAYING)
+		phase = PHASE_WAITING;
+	if (stageIdx < 0 || stageIdx >= STAGE_COUNT)
+		stageIdx = 0;
 }
 
 SlippiExiTypes::GetRoomStateResponse SlippiRoom::GetState(int localMember)
@@ -505,8 +550,10 @@ SlippiExiTypes::GetRoomStateResponse SlippiRoom::GetState(int localMember)
 	strncpy(resp.password, password.c_str(), sizeof(resp.password) - 1);
 	resp.local_member = static_cast<u8>(localMember);
 
-	resp.member_count = static_cast<u8>(members.size());
-	for (size_t i = 0; i < members.size(); i++)
+	// Never more than the game is sent, whatever the room holds
+	size_t memberCount = std::min(members.size(), static_cast<size_t>(MAX_MEMBERS));
+	resp.member_count = static_cast<u8>(memberCount);
+	for (size_t i = 0; i < memberCount; i++)
 	{
 		SlippiExiTypes::RoomMember &rm = resp.members[i];
 		std::string name = ConvertStringForGame(members[i].name, 15);
@@ -518,8 +565,9 @@ SlippiExiTypes::GetRoomStateResponse SlippiRoom::GetState(int localMember)
 		rm.crowns = members[i].crowns;
 	}
 
-	resp.queue_count = static_cast<u8>(queue.size());
-	for (size_t i = 0; i < queue.size(); i++)
+	size_t queueCount = std::min(queue.size(), static_cast<size_t>(MAX_MEMBERS));
+	resp.queue_count = static_cast<u8>(queueCount);
+	for (size_t i = 0; i < queueCount; i++)
 		resp.queue[i] = static_cast<u8>(queue[i]);
 
 	for (int i = 0; i < 2; i++)

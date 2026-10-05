@@ -3356,6 +3356,10 @@ void CEXISlippi::handleReportGame(const SlippiExiTypes::ReportGameQuery &query)
 		if (winnerIdx >= 0)
 			result = winnerIdx == localPlayerIndex ? SlippiRoom::RESULT_WON : SlippiRoom::RESULT_LOST;
 
+		// Nobody won: -1 for a tie, -2 when this side saw a desync, -3 when it saw the opponent disconnect
+		if (winnerIdx < 0)
+			WARN_LOG(SLIPPI_ONLINE, "[Rooms] The match ended without a winner (%d), the room replays it", winnerIdx);
+
 		room->ReportMatchResult(result);
 	}
 }
@@ -3786,11 +3790,22 @@ static bool readLastRoom(std::string &code, std::string &password)
 		return false;
 
 	nlohmann::json j = nlohmann::json::parse(contents, nullptr, false);
-	if (j.is_discarded() || std::time(nullptr) - j.value("savedAt", static_cast<s64>(0)) >= 60 * 60)
+	if (!j.is_object())
 		return false;
 
-	code = j.value("code", "");
-	password = j.value("password", "");
+	// Anything but what this build writes is ignored
+	try
+	{
+		if (std::time(nullptr) - j.value("savedAt", static_cast<s64>(0)) >= 60 * 60)
+			return false;
+
+		code = j.value("code", "");
+		password = j.value("password", "");
+	}
+	catch (const nlohmann::json::exception &)
+	{
+		return false;
+	}
 	return !code.empty();
 }
 

@@ -46,8 +46,16 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		if (!call("room_create", args, resp) || !resp.is_array() || resp.empty())
 			return reg;
 
-		reg.code = resp[0].value("code", "");
-		reg.hostToken = resp[0].value("host_token", "");
+		try
+		{
+			reg.code = resp[0].value("code", "");
+			reg.hostToken = resp[0].value("host_token", "");
+		}
+		catch (const json::exception &e)
+		{
+			logBadReply("room_create", e);
+			return {};
+		}
 		return reg;
 	}
 
@@ -84,22 +92,30 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		if (!call("room_take_over", args, resp) || !resp.is_array() || resp.empty())
 			return result;
 
-		std::string status = resp[0].value("status", "");
-		if (status == "ok")
+		try
 		{
-			result.status = TakeOverStatus::OK;
-			result.reg.code = code;
-			result.reg.hostToken = resp[0].value("host_token", "");
-			result.generation = resp[0].value("generation", 0);
+			std::string status = resp[0].value("status", "");
+			if (status == "ok")
+			{
+				result.status = TakeOverStatus::OK;
+				result.reg.code = code;
+				result.reg.hostToken = resp[0].value("host_token", "");
+				result.generation = resp[0].value("generation", 0);
+			}
+			else if (status == "taken")
+			{
+				result.status = TakeOverStatus::TAKEN;
+				result.generation = resp[0].value("generation", 0);
+			}
+			else if (status == "gone")
+			{
+				result.status = TakeOverStatus::GONE;
+			}
 		}
-		else if (status == "taken")
+		catch (const json::exception &e)
 		{
-			result.status = TakeOverStatus::TAKEN;
-			result.generation = resp[0].value("generation", 0);
-		}
-		else if (status == "gone")
-		{
-			result.status = TakeOverStatus::GONE;
+			logBadReply("room_take_over", e);
+			return {};
 		}
 		return result;
 	}
@@ -119,12 +135,21 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 			return false;
 
 		out.clear();
-		for (const json &el : resp)
+		try
 		{
-			JoinRequest request;
-			request.id = el.value("id", static_cast<s64>(0));
-			request.address = el.value("address", "");
-			out.push_back(request);
+			for (const json &el : resp)
+			{
+				JoinRequest request;
+				request.id = el.value("id", static_cast<s64>(0));
+				request.address = el.value("address", "");
+				out.push_back(request);
+			}
+		}
+		catch (const json::exception &e)
+		{
+			out.clear();
+			logBadReply("room_join_requests", e);
+			return false;
 		}
 		return true;
 	}
@@ -140,23 +165,31 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 		if (!call("room_join", args, resp) || !resp.is_array() || resp.empty())
 			return result;
 
-		std::string status = resp[0].value("status", "");
-		if (status == "ok")
+		try
 		{
-			result.status = JoinStatus::OK;
-			result.address = resp[0].value("address", "");
-			result.hostName = resp[0].value("host_name", "");
-			result.hostCode = resp[0].value("host_code", "");
-			result.generation = resp[0].value("generation", 0);
+			std::string status = resp[0].value("status", "");
+			if (status == "ok")
+			{
+				result.status = JoinStatus::OK;
+				result.address = resp[0].value("address", "");
+				result.hostName = resp[0].value("host_name", "");
+				result.hostCode = resp[0].value("host_code", "");
+				result.generation = resp[0].value("generation", 0);
+			}
+			else if (status == "not_found")
+				result.status = JoinStatus::NOT_FOUND;
+			else if (status == "wrong_password")
+				result.status = JoinStatus::WRONG_PASSWORD;
+			else if (status == "full")
+				result.status = JoinStatus::FULL;
+			else if (status == "locked")
+				result.status = JoinStatus::LOCKED;
 		}
-		else if (status == "not_found")
-			result.status = JoinStatus::NOT_FOUND;
-		else if (status == "wrong_password")
-			result.status = JoinStatus::WRONG_PASSWORD;
-		else if (status == "full")
-			result.status = JoinStatus::FULL;
-		else if (status == "locked")
-			result.status = JoinStatus::LOCKED;
+		catch (const json::exception &e)
+		{
+			logBadReply("room_join", e);
+			return {};
+		}
 
 		return result;
 	}
@@ -178,26 +211,41 @@ class SupabaseRoomDirectory : public SlippiRoomDirectory
 			return false;
 
 		out.clear();
-		for (const json &el : resp)
+		try
 		{
-			Listing l;
-			l.code = el.value("code", "");
-			l.hostName = el.value("host_name", "");
-			l.mode = el.value("mode", 0);
-			l.stageMode = el.value("stage_mode", 0);
-			l.capacity = el.value("capacity", 0);
-			l.memberCount = el.value("member_count", 0);
+			for (const json &el : resp)
+			{
+				Listing l;
+				l.code = el.value("code", "");
+				l.hostName = el.value("host_name", "");
+				l.mode = el.value("mode", 0);
+				l.stageMode = el.value("stage_mode", 0);
+				l.capacity = el.value("capacity", 0);
+				l.memberCount = el.value("member_count", 0);
 
-			// Rooms from countries outside the list's regions have none
-			auto region = el.find("region");
-			if (region != el.end() && region->is_number())
-				l.region = region->get<u8>();
-			out.push_back(l);
+				// Rooms from countries outside the list's regions have none
+				auto region = el.find("region");
+				if (region != el.end() && region->is_number())
+					l.region = region->get<u8>();
+				out.push_back(l);
+			}
+		}
+		catch (const json::exception &e)
+		{
+			out.clear();
+			logBadReply("room_list", e);
+			return false;
 		}
 		return true;
 	}
 
   private:
+	// A reply with a field of the wrong type throws while it's read, and counts as a failed call
+	static void logBadReply(const char *fn, const json::exception &e)
+	{
+		ERROR_LOG(SLIPPI_ONLINE, "[Rooms] Bad reply from directory call %s: %s", fn, e.what());
+	}
+
 	bool call(const std::string &fn, const json &args, json &resp)
 	{
 		CURL *curl = curl_easy_init();

@@ -331,9 +331,24 @@ void SlippiRoomHost::NetThread::Run()
 				std::string contents(reinterpret_cast<char *>(netEvent.packet->data), netEvent.packet->dataLength);
 				enet_packet_destroy(netEvent.packet);
 
+				// A field of the wrong type throws while the message is read. Whoever sent it isn't running
+				// this build's rooms, so they're dropped rather than taking the room down
 				json msg = json::parse(contents, nullptr, false);
-				if (!msg.is_discarded())
-					onReceive(netEvent.peer, msg);
+				bool isBad = !msg.is_object();
+				if (!isBad)
+				{
+					try
+					{
+						onReceive(netEvent.peer, msg);
+					}
+					catch (const json::exception &e)
+					{
+						WARN_LOG(SLIPPI_ONLINE, "[Rooms] Bad message from a member: %s", e.what());
+						isBad = true;
+					}
+				}
+				if (isBad)
+					enet_peer_disconnect_later(netEvent.peer, 0);
 				break;
 			}
 			case ENET_EVENT_TYPE_DISCONNECT:
@@ -1236,36 +1251,51 @@ bool SlippiRoomMember::NetThread::connect(const SlippiRoomDirectory::JoinResult 
 			std::string contents(reinterpret_cast<char *>(netEvent.packet->data), netEvent.packet->dataLength);
 			enet_packet_destroy(netEvent.packet);
 
+			// A field of the wrong type throws while the message is read, and the message is ignored. The
+			// room is read into a copy, so a bad one leaves the last good one in place
 			json msg = json::parse(contents, nullptr, false);
-			std::string type = msg.is_discarded() ? "" : msg.value("type", "");
-			if (type == "state")
+			try
 			{
-				std::lock_guard<std::mutex> lk(m_shared->lock);
-				m_shared->room.FromJson(msg.value("room", json::object()));
-				m_shared->localMember = msg.value("you", 0);
-				m_shared->status = STATUS_JOINED;
-				m_isReconnecting = false;
-			}
-			else if (type == "handover")
-			{
-				handoverTo = msg.value("to", "");
-				handoverReason = msg.value("reason", "");
-			}
-			else if (type == "closed")
-			{
-				fail(static_cast<ConnectionError>(msg.value("error", static_cast<int>(CONNECT_IDLE))));
-			}
-			else if (type == "reject")
-			{
-				std::string reason = msg.value("reason", "");
-				WARN_LOG(SLIPPI_ONLINE, "[Rooms] The room rejected us, reason: %s", reason.c_str());
+				std::string type = msg.is_object() ? msg.value("type", "") : "";
+				if (type == "state")
+				{
+					std::lock_guard<std::mutex> lk(m_shared->lock);
+					SlippiRoom room = m_shared->room;
+					room.FromJson(msg.value("room", json::object()));
+					int you = msg.value("you", -1);
+					if (you >= 0 && you < room.MemberCount())
+					{
+						m_shared->room = room;
+						m_shared->localMember = you;
+						m_shared->status = STATUS_JOINED;
+						m_isReconnecting = false;
+					}
+				}
+				else if (type == "handover")
+				{
+					handoverTo = msg.value("to", "");
+					handoverReason = msg.value("reason", "");
+				}
+				else if (type == "closed")
+				{
+					fail(static_cast<ConnectionError>(msg.value("error", static_cast<int>(CONNECT_IDLE))));
+				}
+				else if (type == "reject")
+				{
+					std::string reason = msg.value("reason", "");
+					WARN_LOG(SLIPPI_ONLINE, "[Rooms] The room rejected us, reason: %s", reason.c_str());
 
-				ConnectionError error = CONNECT_REJECTED;
-				if (reason == "full")
-					error = CONNECT_FULL;
-				else if (reason == "wrong_password")
-					error = CONNECT_WRONG_PASSWORD;
-				fail(error);
+					ConnectionError error = CONNECT_REJECTED;
+					if (reason == "full")
+						error = CONNECT_FULL;
+					else if (reason == "wrong_password")
+						error = CONNECT_WRONG_PASSWORD;
+					fail(error);
+				}
+			}
+			catch (const json::exception &e)
+			{
+				WARN_LOG(SLIPPI_ONLINE, "[Rooms] Bad message from the room: %s", e.what());
 			}
 		}
 		else if (net > 0 && netEvent.type == ENET_EVENT_TYPE_DISCONNECT)

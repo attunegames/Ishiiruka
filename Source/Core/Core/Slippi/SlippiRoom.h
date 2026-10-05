@@ -65,6 +65,8 @@ class SlippiRoom
 	static const int MAX_MEMBERS = ROOM_MAX_MEMBERS;
 	static const int STAGE_COUNT = ROOM_STAGE_COUNT;
 	static const u8 CHAR_RANDOM = 26;
+	static const u8 MODE_COUNT = 5;
+	static const u8 STAGE_MODE_COUNT = 2;
 
 	static const int SET_DELAY_MS = 2000;
 	static const int CROWN_DELAY_MS = 4000;
